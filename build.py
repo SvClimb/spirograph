@@ -11,5 +11,6 @@ doc = ('<!doctype html>\n<html lang="ru"><head><meta charset="utf-8"><meta name=
 tag = '<script src="https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/build/mp4-muxer.js"></script>'
 assert doc.count(tag) == 1
 muxer = muxer_src.read_text()
+for d in ("deploy", "share"): (root / d).mkdir(exist_ok=True)
 (root / "deploy/index.html").write_text(doc)
 (root / "share/spirograph.html").write_text(doc.replace(tag, "<script>\n" + muxer.rstrip("\n") + "\n</script>"))

@@ -1,0 +1,5 @@
+deploy/index.html
+share/
+_site/
+__pycache__/
+*.mp4

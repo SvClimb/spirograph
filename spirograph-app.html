@@ -1,0 +1,1363 @@
+<title>Спинограф</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&family=Unbounded:wght@500&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: drawing board (canvas) on the left, a narrow instrument panel on the right; stacks on phones. Single dark look by choice: the ink glows on a dark board. */
+:root{
+  color-scheme: dark;
+  --board:#0d1015;
+  --panel:#141820;
+  --line:#262c38;
+  --ink:#e6e9ef;
+  --muted:#8b93a3;
+  --accent:#a9b8ff;
+  --accent-ink:#11152a;
+  --warn:#f0b86e;
+  --f-display:"Unbounded", "Golos Text", system-ui, sans-serif;
+  --f-ui:"Golos Text", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-num:"JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+html,body{height:100%}
+[hidden]{display:none!important}
+body{background:var(--board);color:var(--ink);font-family:var(--f-ui);font-size:14px}
+.app{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:0;min-height:100%}
+.stage{display:flex;flex-direction:column;gap:12px;padding:16px;min-width:0}
+.stage header{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+h1{font-family:var(--f-display);font-weight:500;font-size:20px;letter-spacing:.01em;margin:0}
+.hint{color:var(--muted);font-size:13px}
+.canvas-wrap{position:relative;width:100%;max-width:min(100%, calc((100vh - 150px) * var(--arn, 1)));aspect-ratio:var(--ar, 1 / 1);align-self:center}
+#view{width:100%;height:100%;display:block;border-radius:6px;border:1px solid var(--line);touch-action:none;cursor:default}
+#view.drawing{cursor:crosshair}
+#view.grab{cursor:grab}
+#view.grabbing{cursor:grabbing}
+.transport{display:flex;align-items:center;gap:10px;flex-wrap:wrap;max-width:min(100%, max(560px, calc((100vh - 150px) * var(--arn, 1))));width:100%;align-self:center}
+.transport input[type=range]{flex:1;min-width:120px}
+.readout{font-family:var(--f-num);font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+aside{background:var(--panel);border-left:1px solid var(--line);padding:16px;display:flex;flex-direction:column;gap:18px;overflow-y:auto;max-height:100vh;position:sticky;top:0}
+section{display:flex;flex-direction:column;gap:10px}
+h2{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);font-weight:600;margin:0}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+button{font:inherit;color:var(--ink);background:transparent;border:1px solid var(--line);border-radius:999px;padding:5px 11px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button[aria-pressed=true]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600;border-radius:8px;padding:8px 14px}
+button.square{border-radius:8px}
+button:disabled{opacity:.5;cursor:default}
+.row{display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center}
+.row label{font-size:13px}
+.row output{font-family:var(--f-num);font-size:12px;color:var(--accent);font-variant-numeric:tabular-nums}
+.row input[type=range]{grid-column:1/-1;width:100%}
+input[type=range]{accent-color:var(--accent)}
+.inline{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.inline label{display:flex;gap:6px;align-items:center;font-size:13px}
+input[type=color]{width:34px;height:26px;border:1px solid var(--line);background:none;border-radius:6px;padding:1px}
+select,input[type=number]{font:inherit;background:var(--board);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:4px 6px}
+input[type=number]{width:70px;font-family:var(--f-num)}
+.note{font-size:12px;color:var(--muted);line-height:1.45}
+.warn{font-size:12px;color:var(--warn);line-height:1.45}
+.swatch{height:10px;border-radius:5px;border:1px solid var(--line)}
+.progress{height:6px;border-radius:3px;background:var(--line);overflow:hidden}
+.progress>div{height:100%;width:0;background:var(--accent)}
+#result video{width:100%;border-radius:6px;border:1px solid var(--line)}
+@media (max-width: 820px){
+  .app{grid-template-columns:1fr}
+  aside{border-left:0;border-top:1px solid var(--line);max-height:none;position:static}
+  .canvas-wrap{max-width:min(100%, calc(85vh * var(--arn, 1)))}
+  .transport{max-width:100%}
+}
+@media (prefers-reduced-motion: reduce){ *{scroll-behavior:auto} }
+</style>
+
+<div class="app">
+  <div class="stage">
+    <header>
+      <h1>Спинограф</h1>
+      <span class="hint" id="hint">Выберите форму или нарисуйте свою, затем настройте колесо справа.</span>
+    </header>
+    <div class="canvas-wrap"><canvas id="view" width="1000" height="1000" aria-label="Холст спинографа"></canvas></div>
+    <div class="transport">
+      <button class="square" id="play" aria-label="Пауза">⏸</button>
+      <button class="square" id="restart" aria-label="Сначала">⟲</button>
+      <input type="range" id="scrub" min="0" max="1000" value="0" aria-label="Прогресс рисования">
+      <button class="square" id="finish">Сразу весь узор</button>
+      <span class="readout" id="info"></span>
+    </div>
+  </div>
+
+  <aside>
+    <section>
+      <h2>Холст</h2>
+      <div class="chips" id="aspects" role="radiogroup" aria-label="Формат холста"></div>
+      <div class="chips" id="objList" aria-label="Объекты на холсте"></div>
+      <div class="chips">
+        <button id="addObj">+ Добавить объект</button>
+        <button id="delObj">Удалить выбранный</button>
+        <button id="layoutObj">Расставить ровно</button>
+      </div>
+      <div class="row" id="objSizeRow">
+        <label for="objSize">Размер выбранного объекта</label><output id="objSizeOut"></output>
+        <input type="range" id="objSize" min="10" max="150" value="100">
+      </div>
+      <p class="note" id="objNote">Все объекты рисуются одновременно с одинаковыми настройками. Перетаскивайте их по холсту мышью или пальцем, колёсико мыши над объектом меняет его размер.</p>
+    </section>
+
+    <section>
+      <h2 id="shapeTitle">Форма</h2>
+      <div class="chips" id="presets"></div>
+      <div class="chips">
+        <button id="drawFree" aria-pressed="false">✎ Нарисовать кривую</button>
+        <button id="drawPoly" aria-pressed="false">⌁ Ломаная по точкам</button>
+      </div>
+      <div class="inline">
+        <label><input type="checkbox" id="closed"> Замкнуть контур</label>
+        <button id="polyDone" hidden>Готово</button>
+      </div>
+      <div class="row" id="smoothRow">
+        <label for="smooth">Сглаживание рисунка</label><output id="smoothOut"></output>
+        <input type="range" id="smooth" min="0" max="20" value="6">
+      </div>
+      <p class="note" id="drawNote" hidden></p>
+    </section>
+
+    <section>
+      <h2>Спинограф</h2>
+      <div class="inline" role="radiogroup" aria-label="Сторона">
+        <button id="sideIn" aria-pressed="true">Внутри формы</button>
+        <button id="sideOut" aria-pressed="false">Снаружи</button>
+        <button id="sideBoth" aria-pressed="false">Внутри и снаружи</button>
+      </div>
+      <div class="row">
+        <label for="wheel">Размер колеса, зубцов</label><output id="wheelOut"></output>
+        <input type="range" id="wheel" min="8" max="150" value="34">
+      </div>
+      <div class="row">
+        <label for="ring">Зубцов на всей форме</label><output id="ringOut"></output>
+        <input type="range" id="ring" min="24" max="240" value="120">
+      </div>
+      <div class="row">
+        <label for="gap">Отступ колеса от линии</label><output id="gapOut"></output>
+        <input type="range" id="gap" min="0" max="150" value="0">
+      </div>
+      <div class="row">
+        <label for="pen">Перо от центра колеса</label><output id="penOut"></output>
+        <input type="range" id="pen" min="0" max="150" value="85">
+      </div>
+      <div class="row">
+        <label for="phase">Начальный угол пера</label><output id="phaseOut"></output>
+        <input type="range" id="phase" min="0" max="359" value="0">
+      </div>
+      <div class="inline">
+        <label for="laps">Кругов</label>
+        <input type="number" id="laps" min="0" max="200" value="0">
+        <span class="note">0 = пока узор не замкнётся</span>
+      </div>
+      <p class="warn" id="warn" hidden></p>
+    </section>
+
+    <section>
+      <h2>Вид</h2>
+      <div class="inline">
+        <label for="grad">Цвет линии</label>
+        <select id="grad"></select>
+        <input type="color" id="inkColor" value="#ffd27a" aria-label="Цвет линии">
+      </div>
+      <div class="swatch" id="swatch" aria-hidden="true"></div>
+      <div class="inline" id="customRow" hidden>
+        <label>От <input type="color" id="c1" value="#ff4fa3"></label>
+        <label>через <input type="color" id="c2" value="#ffd166"></label>
+        <label>до <input type="color" id="c3" value="#3ee6c4"></label>
+      </div>
+      <div class="row" id="hueRow">
+        <label for="hue">Начальный оттенок радуги</label><output id="hueOut"></output>
+        <input type="range" id="hue" min="0" max="359" value="200">
+      </div>
+      <div class="inline" id="cycleRow">
+        <label for="gradCycle">Градиент</label>
+        <select id="gradCycle">
+          <option value="whole">от начала до конца рисунка</option>
+          <option value="wave">туда и обратно</option>
+          <option value="lap">повторять на каждом круге</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="width">Толщина линии</label><output id="widthOut"></output>
+        <input type="range" id="width" min="5" max="60" value="16">
+      </div>
+      <div class="inline">
+        <label>Фон <input type="color" id="bg" value="#0e1116"></label>
+        <label>Форма <input type="color" id="shapeColor" value="#3a4250"></label>
+        <label>Колесо <input type="color" id="wheelColor" value="#9ec9ff"></label>
+        <label><input type="checkbox" id="showWheel" checked> Показывать колесо</label>
+      </div>
+      <div class="row">
+        <label for="wheelAlpha">Прозрачность колеса</label><output id="wheelAlphaOut"></output>
+        <input type="range" id="wheelAlpha" min="0" max="100" value="0">
+      </div>
+      <div class="inline">
+        <label><input type="checkbox" id="gearTeeth" checked> Зубчики на колесе</label>
+      </div>
+      <div class="inline">
+        <label><input type="checkbox" id="hideShapeDraw"> Скрыть фигуру во время рисования</label>
+        <label><input type="checkbox" id="hideShapeEnd"> Скрыть фигуру на готовом узоре</label>
+      </div>
+      <div class="row">
+        <label for="dur">Длительность рисования</label><output id="durOut"></output>
+        <input type="range" id="dur" min="3" max="90" value="20">
+      </div>
+      <div class="row">
+        <label for="easeIn">Разгон в начале</label><output id="easeInOut"></output>
+        <input type="range" id="easeIn" min="0" max="50" value="15">
+      </div>
+      <div class="row">
+        <label for="easeOut">Замедление в конце</label><output id="easeOutOut"></output>
+        <input type="range" id="easeOut" min="0" max="50" value="20">
+      </div>
+    </section>
+
+    <section>
+      <h2>Звук</h2>
+      <div class="inline">
+        <label><input type="checkbox" id="sound"> Бесконечный подъём тона</label>
+      </div>
+      <p class="note">Глиссандо Шепарда–Риссе: тон всё время ползёт вверх и никогда не кончается. Скорость подъёма следует за скоростью колеса, со всеми разгонами и торможениями.</p>
+      <div class="inline">
+        <label for="pitchDir">Направление</label>
+        <select id="pitchDir"><option value="1">вверх</option><option value="-1">вниз</option></select>
+        <label for="timbre">Тембр</label>
+        <select id="timbre"><option value="pure">чистый</option><option value="warm">тёплый</option><option value="glass">стеклянный</option></select>
+      </div>
+      <div class="row">
+        <label for="pitchRate">Скорость подъёма</label><output id="pitchRateOut"></output>
+        <input type="range" id="pitchRate" min="2" max="100" value="15">
+      </div>
+      <div class="row">
+        <label for="slowFx">Эффект пластинки при разгоне и торможении</label><output id="slowFxOut"></output>
+        <input type="range" id="slowFx" min="0" max="100" value="70">
+      </div>
+      <div class="row">
+        <label for="vol">Громкость</label><output id="volOut"></output>
+        <input type="range" id="vol" min="0" max="100" value="60">
+      </div>
+    </section>
+
+    <section>
+      <h2>Вывод</h2>
+      <div class="inline">
+        <label for="res">Размер</label>
+        <select id="res"><option value="720">720×720</option><option value="1080" selected>1080×1080</option><option value="1440">1440×1440</option></select>
+        <label for="hold">Пауза в конце, с</label>
+        <input type="number" id="hold" min="0" max="10" step="0.5" value="2.5">
+      </div>
+      <div class="inline">
+        <button class="primary" id="exportVideo">Скачать видео</button>
+        <button id="exportPng">PNG узора</button>
+      </div>
+      <div class="progress" id="exportBar" hidden><div></div></div>
+      <p class="note" id="exportNote"></p>
+      <div id="result"></div>
+    </section>
+  </aside>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/build/mp4-muxer.js"></script>
+<script>
+(() => {
+const TAU = Math.PI * 2;
+const $ = id => document.getElementById(id);
+
+/* ---------------- shapes (world units, roughly [-1,1], y up) ---------------- */
+function circlePts(fx, fy, n = 720) {
+  const p = [];
+  for (let i = 0; i < n; i++) { const t = TAU * i / n; p.push(fx(t), fy(t)); }
+  return p;
+}
+function pairs(flat) { const o = []; for (let i = 0; i < flat.length; i += 2) o.push([flat[i], flat[i + 1]]); return o; }
+const PRESETS = {
+  "Линия": () => ({ pts: [[-1, 0], [1, 0]], closed: false }),
+  "Волна": () => { const p = []; for (let i = 0; i <= 300; i++) { const x = -1 + 2 * i / 300; p.push([x, 0.2 * Math.sin(Math.PI * x)]); } return { pts: p, closed: false }; },
+  "Круг": () => ({ pts: pairs(circlePts(Math.cos, Math.sin)), closed: true }),
+  "Эллипс": () => ({ pts: pairs(circlePts(t => Math.cos(t), t => 0.6 * Math.sin(t))), closed: true }),
+  "Квадрат": () => ({ pts: [[-1, -1], [1, -1], [1, 1], [-1, 1]], closed: true }),
+  "Треугольник": () => ({ pts: [0, 1, 2].map(k => { const a = Math.PI / 2 + k * TAU / 3; return [Math.cos(a), Math.sin(a)]; }), closed: true }),
+  "Трилистник": () => ({ pts: pairs(circlePts(t => (1 + 0.15 * Math.cos(3 * t)) * Math.cos(t), t => (1 + 0.15 * Math.cos(3 * t)) * Math.sin(t))), closed: true }),
+  "Сердце": () => ({ pts: pairs(circlePts(t => 16 * Math.sin(t) ** 3 / 16, t => (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) / 16 + 0.15)), closed: true }),
+  "Звезда": () => ({ pts: Array.from({ length: 10 }, (_, k) => { const a = Math.PI / 2 + k * TAU / 10, rr = k % 2 ? 0.45 : 1; return [rr * Math.cos(a), rr * Math.sin(a)]; }), closed: true }),
+};
+
+/* ---------------- state ---------------- */
+// Every object on the canvas has its own shape and placement; all wheel/look settings are shared.
+// u, v: centre as a fraction of canvas width/height; size: fraction of the canvas's short side its pattern fills.
+function newObject(shape, preset, rawFree = null) { return { shape, preset, rawFree, u: 0.5, v: 0.5, size: 1, models: [], fit: null }; }
+const ASPECTS = { "1:1": { w: 1, h: 1, name: "Квадрат 1:1" }, "16:9": { w: 16, h: 9, name: "16:9 горизонтально" }, "9:16": { w: 9, h: 16, name: "9:16 вертикально" } };
+const MAX_OBJECTS = 12;
+const S = {
+  objects: [newObject(PRESETS["Трилистник"](), "Трилистник")], sel: 0,
+  aspect: "1:1",
+  side: "inside",
+  drawMode: null, drawing: null,
+  items: [],
+  progress: 0, playing: true, lastT: 0,
+};
+const cur = () => S.objects[S.sel];
+
+/* ---------------- geometry: rolling a wheel along a contour ---------------- */
+function wrapPi(a) { a = (a + Math.PI) % TAU; if (a < 0) a += TAU; return a - Math.PI; }
+function polyLen(v, closed) { let L = 0; const n = v.length; for (let i = 0; i < (closed ? n : n - 1); i++) { const a = v[i], b = v[(i + 1) % n]; L += Math.hypot(b[0] - a[0], b[1] - a[1]); } return L; }
+
+function contourLoop(pts, closed) {
+  let v = pts.filter((p, i) => i === 0 || Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]) > 1e-9);
+  if (closed && v.length > 2 && Math.hypot(v[0][0] - v.at(-1)[0], v[0][1] - v.at(-1)[1]) < 1e-9) v.pop();
+  let area = 0;
+  for (let i = 0; i < v.length; i++) { const a = v[i], b = v[(i + 1) % v.length]; area += a[0] * b[1] - b[0] * a[1]; }
+  if (!closed) v = v.concat(v.slice(1, -1).reverse()); // there and back: the wheel wraps around the ends
+  // add the midpoint of the longest side: a safe place to start a lap when every corner is concave
+  let li = 0, ll = -1;
+  for (let i = 0; i < v.length; i++) { const a = v[i], b = v[(i + 1) % v.length], l = Math.hypot(b[0] - a[0], b[1] - a[1]); if (l > ll) { ll = l; li = i; } }
+  const a = v[li], b = v[(li + 1) % v.length];
+  v = v.slice(0, li + 1).concat([[(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]], v.slice(li + 1));
+  return { v, area };
+}
+
+// One lap: centre samples with per-transition rolling length (ds) and tangent turn (dth).
+function sampleLap(v, sigma, r, g, step) {
+  const n = v.length, R = r + g;
+  const dir = [], len = [], ang = [];
+  for (let i = 0; i < n; i++) { const a = v[i], b = v[(i + 1) % n]; const dx = b[0] - a[0], dy = b[1] - a[1]; dir.push([dx, dy]); len.push(Math.hypot(dx, dy)); ang.push(Math.atan2(dy, dx)); }
+  const turn = i => { let d = wrapPi(ang[i] - ang[(i - 1 + n) % n]); if (Math.abs(Math.abs(d) - Math.PI) < 1e-9) d = -sigma * Math.PI; return d; };
+  // start right after the most convex vertex: it surely lies on the outer envelope
+  let k0 = 0, best = -Infinity;
+  for (let i = 0; i < n; i++) { const c = -sigma * turn(i); if (c > best) { best = c; k0 = i; } }
+  const X = [], Y = [], TH = [], SS = [];
+  let th = ang[k0], s = 0;
+  for (let j = 0; j < n; j++) {
+    const i = (k0 + j) % n, a = v[i];
+    const m = Math.max(1, Math.ceil(len[i] / step));
+    const nx = -Math.sin(th) * sigma * R, ny = Math.cos(th) * sigma * R;
+    for (let k = 0; k < m; k++) { const f = k / m; X.push(a[0] + f * dir[i][0] + nx); Y.push(a[1] + f * dir[i][1] + ny); TH.push(th); SS.push(s + f * len[i]); }
+    s += len[i];
+    const iv = (i + 1) % n, d = turn(iv), b = v[iv];
+    if (sigma * d < 0) { // convex for the wheel: pivot around the vertex
+      const mm = Math.max(1, Math.ceil(Math.abs(d) * R / step));
+      for (let k = 1; k <= mm; k++) { const t = th + d * k / mm; X.push(b[0] - Math.sin(t) * sigma * R); Y.push(b[1] + Math.cos(t) * sigma * R); TH.push(t); SS.push(s + g * Math.abs(d) * k / mm); }
+      s += g * Math.abs(d);
+    }
+    th += d;
+  }
+  const M = X.length, W = th - ang[k0];
+  const ds = new Float64Array(M), dth = new Float64Array(M);
+  for (let k = 0; k < M; k++) {
+    const k1 = k + 1;
+    ds[k] = (k1 < M ? SS[k1] : s) - SS[k];
+    dth[k] = (k1 < M ? TH[k1] : TH[0] + W) - TH[k];
+  }
+  return { X, Y, ds, dth, M };
+}
+
+function segInter(ax, ay, bx, by, cx, cy, dx, dy) {
+  const rx = bx - ax, ry = by - ay, sx = dx - cx, sy = dy - cy;
+  const den = rx * sy - ry * sx;
+  if (Math.abs(den) < 1e-14) return null;
+  const qx = cx - ax, qy = cy - ay;
+  const t = (qx * sy - qy * sx) / den, u = (qx * ry - qy * rx) / den;
+  if (t <= 1e-9 || t >= 1 - 1e-9 || u <= 1e-9 || u >= 1 - 1e-9) return null;
+  return [t, u];
+}
+
+// Remove local self-intersection loops of the centre path (concave corners, tight bends):
+// there the wheel would have to pass through the shape, so it skips across instead.
+function cutLoops(L, cell) {
+  const { X, Y, ds, dth, M } = L;
+  const grid = new Map();
+  const key = (i, j) => i * 73856093 ^ j * 19349663;
+  for (let k = 0; k < M; k++) {
+    const k1 = (k + 1) % M;
+    const x0 = Math.floor(Math.min(X[k], X[k1]) / cell), x1 = Math.floor(Math.max(X[k], X[k1]) / cell);
+    const y0 = Math.floor(Math.min(Y[k], Y[k1]) / cell), y1 = Math.floor(Math.max(Y[k], Y[k1]) / cell);
+    for (let i = x0; i <= x1; i++) for (let j = y0; j <= y1; j++) { const kk = key(i, j); let a = grid.get(kk); if (!a) grid.set(kk, a = []); a.push(k); }
+  }
+  const hits = [];
+  const seen = new Set();
+  for (const arr of grid.values()) {
+    for (let p = 0; p < arr.length; p++) for (let q = p + 1; q < arr.length; q++) {
+      let a = arr[p], b = arr[q]; if (a > b) [a, b] = [b, a];
+      if (b - a < 2 || (a === 0 && b === M - 1)) continue;
+      if (b - a > M / 2) continue; // only local loops
+      const id = a * M + b; if (seen.has(id)) continue; seen.add(id);
+      const r = segInter(X[a], Y[a], X[(a + 1) % M], Y[(a + 1) % M], X[b], Y[b], X[(b + 1) % M], Y[(b + 1) % M]);
+      if (r) hits.push({ a, b, t: r[0], u: r[1] });
+    }
+  }
+  if (!hits.length) return { X, Y, ds: Array.from(ds), dth: Array.from(dth), cuts: 0, bigCuts: 0 };
+  // keep the widest loops first; anything overlapping an accepted loop is dropped
+  // (tiny loops at polygon vertices chain into each other and must not merge)
+  hits.sort((p, q) => (q.b - q.a) - (p.b - p.a));
+  const acc = [];
+  for (const h of hits) if (!acc.some(g => h.a < g.b + 1 && g.a < h.b + 1)) acc.push(h);
+  acc.sort((p, q) => p.a - q.a);
+  const groups = acc.map(h => ({ start: h, end: h }));
+  const oX = [], oY = [], oDs = [], oDth = [];
+  let k = 0;
+  for (const g of groups) {
+    for (; k <= g.start.a; k++) { oX.push(X[k]); oY.push(Y[k]); oDs.push(ds[k]); oDth.push(dth[k]); }
+    const s = g.start, e = g.end;
+    oDs[oDs.length - 1] = ds[s.a] * s.t; oDth[oDth.length - 1] = dth[s.a] * s.t;
+    const ax = X[s.a] + s.t * (X[(s.a + 1) % M] - X[s.a]), ay = Y[s.a] + s.t * (Y[(s.a + 1) % M] - Y[s.a]);
+    const bx = X[e.b] + e.u * (X[(e.b + 1) % M] - X[e.b]), by = Y[e.b] + e.u * (Y[(e.b + 1) % M] - Y[e.b]);
+    oX.push(ax); oY.push(ay); oDs.push(0); oDth.push(0);
+    if (Math.hypot(bx - ax, by - ay) > 1e-9) { oX.push(bx); oY.push(by); oDs.push(0); oDth.push(0); }
+    oDs[oDs.length - 1] = ds[e.b] * (1 - e.u); oDth[oDth.length - 1] = dth[e.b] * (1 - e.u);
+    k = e.b + 1;
+  }
+  for (; k < M; k++) { oX.push(X[k]); oY.push(Y[k]); oDs.push(ds[k]); oDth.push(dth[k]); }
+  return { X: oX, Y: oY, ds: oDs, dth: oDth, cuts: groups.length, bigCuts: groups.filter(g => g.end.b - g.start.a > 12).length };
+}
+
+function gcd(a, b) { while (b) [a, b] = [b, a % b]; return a; }
+
+function buildModel(p) {
+  const { v, area } = contourLoop(p.pts, p.closed);
+  if (v.length < 2) return null;
+  const sigma = p.closed ? (((p.side === "inside") === (area > 0)) ? 1 : -1) : 1;
+  const L0 = p.closed ? polyLen(v, true) : polyLen(v, true);
+  const Rt = p.ring, w = p.wheel;
+  const gf = p.gap, pen = p.pen;
+  let r = L0 * w / (TAU * Rt);
+  let lap, S_, A_;
+  const T = k => k - sigma * Rt / w; // target wheel turns per lap
+  for (let it = 0; it < 8; it++) {
+    const g = gf * r;
+    const step = Math.max(Math.min(r, L0 / 50) / 45, L0 / 6000);
+    lap = cutLoops(sampleLap(v, sigma, r, g, step), step * 6);
+    S_ = 0; A_ = 0; for (let i = 0; i < lap.ds.length; i++) { S_ += lap.ds[i]; A_ += lap.dth[i]; }
+    const k = Math.round(A_ / TAU);
+    const den = A_ - TAU * T(k);
+    const rn = sigma * S_ / den;
+    if (!(rn > 0) || !isFinite(rn)) break;
+    if (Math.abs(rn - r) < 1e-6 * r) { r = rn; break; }
+    r = it === 0 ? rn : 0.5 * (r + rn);
+  }
+  const k = Math.round(A_ / TAU);
+  const rRoll = sigma * S_ / (A_ - TAU * T(k)) > 0 ? sigma * S_ / (A_ - TAU * T(k)) : r;
+  const laps = p.laps > 0 ? p.laps : w / gcd(Rt, w);
+  const m = lap.X.length;
+  const N = m * laps + 1;
+  const CX = new Float32Array(N), CY = new Float32Array(N), AL = new Float64Array(N), PX = new Float32Array(N), PY = new Float32Array(N), U = new Float64Array(N);
+  let a = p.phase;
+  for (let L = 0, idx = 0; L < laps; L++) {
+    for (let i = 0; i < m; i++, idx++) {
+      CX[idx] = lap.X[i]; CY[idx] = lap.Y[i]; AL[idx] = a;
+      a += lap.dth[i] - sigma * lap.ds[i] / rRoll;
+    }
+  }
+  CX[N - 1] = lap.X[0]; CY[N - 1] = lap.Y[0]; AL[N - 1] = a;
+  for (let i = 0; i < N; i++) { PX[i] = CX[i] + pen * r * Math.cos(AL[i]); PY[i] = CY[i] + pen * r * Math.sin(AL[i]); }
+  for (let i = 1; i < N; i++) U[i] = U[i - 1] + Math.hypot(CX[i] - CX[i - 1], CY[i] - CY[i - 1]);
+  // does the wheel still cut into the shape somewhere? (too big for a bend or a neck)
+  const shapeS = densify(p.pts, p.closed, r / 8);
+  const touch = minDistOk(shapeS, lap, (r + gf * r) * 0.97, r);
+  return { r, sigma, laps, N, CX, CY, AL, PX, PY, U, pen, cuts: lap.bigCuts, overlap: !touch, wheelTeeth: w };
+}
+
+function densify(pts, closed, step) {
+  const o = [], n = pts.length;
+  for (let i = 0; i < (closed ? n : n - 1); i++) {
+    const a = pts[i], b = pts[(i + 1) % n], l = Math.hypot(b[0] - a[0], b[1] - a[1]), m = Math.max(1, Math.ceil(l / step));
+    for (let k = 0; k < m; k++) o.push([a[0] + (b[0] - a[0]) * k / m, a[1] + (b[1] - a[1]) * k / m]);
+  }
+  if (!closed) o.push(pts[n - 1]);
+  return o;
+}
+function minDistOk(shapePts, lap, minD, cell) {
+  const grid = new Map(), key = (i, j) => i + "," + j;
+  for (const p of shapePts) { const k = key(Math.floor(p[0] / cell), Math.floor(p[1] / cell)); let a = grid.get(k); if (!a) grid.set(k, a = []); a.push(p); }
+  const reach = Math.ceil(minD / cell);
+  for (let i = 0; i < lap.X.length; i += 2) {
+    const x = lap.X[i], y = lap.Y[i], ci = Math.floor(x / cell), cj = Math.floor(y / cell);
+    for (let a = -reach; a <= reach; a++) for (let b = -reach; b <= reach; b++) {
+      const arr = grid.get(key(ci + a, cj + b)); if (!arr) continue;
+      for (const p of arr) if (Math.hypot(p[0] - x, p[1] - y) < minD) return false;
+    }
+  }
+  return true;
+}
+
+/* ---------------- parameters & UI ---------------- */
+function params() {
+  return {
+    side: S.side,
+    wheel: +$("wheel").value, ring: +$("ring").value,
+    gap: +$("gap").value / 100, pen: +$("pen").value / 100,
+    phase: +$("phase").value * Math.PI / 180, laps: +$("laps").value || 0,
+  };
+}
+
+const GRADIENTS = {
+  rainbow: { name: "Радуга" },
+  sunset: { name: "Закат", stops: ["#ff5e62", "#ff9966", "#ffd36e"] },
+  ocean: { name: "Океан", stops: ["#00c6ff", "#0072ff", "#7b5cff"] },
+  neon: { name: "Неон", stops: ["#ff2bd6", "#7a5cff", "#00f0ff"] },
+  fire: { name: "Огонь", stops: ["#ffe259", "#ff7e29", "#e8173a"] },
+  forest: { name: "Лес", stops: ["#d4fc79", "#5fd38d", "#0f9b8e"] },
+  pastel: { name: "Пастель", stops: ["#ffb6c1", "#c3b1ff", "#9fe8ff"] },
+  gold: { name: "Золото", stops: ["#fff1b8", "#f2c14e", "#c48a1a"] },
+  ice: { name: "Лёд", stops: ["#ffffff", "#a8e6ff", "#4f7cff"] },
+  custom: { name: "Свой градиент" },
+  solid: { name: "Один цвет" },
+};
+function hexRgb(h) { h = h.replace("#", ""); return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)); }
+function look() {
+  const g = $("grad").value;
+  let stops = null;
+  if (g === "custom") stops = [$("c1").value, $("c2").value, $("c3").value];
+  else if (GRADIENTS[g].stops) stops = GRADIENTS[g].stops;
+  return {
+    grad: g, stops: stops && stops.map(hexRgb), ink: $("inkColor").value, hue: +$("hue").value,
+    cycle: $("gradCycle").value,
+    width: +$("width").value / 10, bg: $("bg").value, shapeColor: $("shapeColor").value,
+    wheel: hexRgb($("wheelColor").value),
+    showWheel: $("showWheel").checked, dur: +$("dur").value,
+    wheelOpacity: 1 - +$("wheelAlpha").value / 100, gear: $("gearTeeth").checked,
+    hideShapeDraw: $("hideShapeDraw").checked, hideShapeEnd: $("hideShapeEnd").checked,
+    easeIn: +$("easeIn").value / 100, easeOut: +$("easeOut").value / 100,
+  };
+}
+function syncOutputs() {
+  $("wheelOut").textContent = $("wheel").value;
+  $("ringOut").textContent = $("ring").value;
+  $("gapOut").textContent = $("gap").value + "% r";
+  $("penOut").textContent = $("pen").value + "% r";
+  $("phaseOut").textContent = $("phase").value + "°";
+  $("hueOut").textContent = $("hue").value + "°";
+  $("widthOut").textContent = (+$("width").value / 10).toFixed(1);
+  $("durOut").textContent = $("dur").value + " с";
+  $("wheelAlphaOut").textContent = $("wheelAlpha").value + "%";
+  $("pitchRateOut").textContent = (+$("pitchRate").value / 100).toFixed(2) + " окт/с";
+  $("volOut").textContent = $("vol").value + "%";
+  $("slowFxOut").textContent = $("slowFx").value + "%";
+  $("smoothOut").textContent = $("smooth").value;
+  const d = +$("dur").value;
+  $("easeInOut").textContent = (d * $("easeIn").value / 100).toFixed(1) + " с";
+  $("easeOutOut").textContent = (d * $("easeOut").value / 100).toFixed(1) + " с";
+  const g = $("grad").value;
+  $("hueRow").hidden = g !== "rainbow";
+  $("customRow").hidden = g !== "custom";
+  $("inkColor").hidden = g !== "solid";
+  $("cycleRow").hidden = g === "solid";
+  const lk = look();
+  const css = g === "rainbow" ? Array.from({ length: 7 }, (_, i) => colorAt(lk, i / 6)).join(",")
+    : g === "solid" ? `${lk.ink},${lk.ink}` : lk.stops.map(c => `rgb(${c})`).join(",");
+  $("swatch").style.background = `linear-gradient(90deg,${css})`;
+}
+
+// Time → drawing progress with a smooth speed-up at the start and slow-down at the end.
+// Speed rises along a half-cosine over the first `a` of the time, holds, then falls over the last `b`.
+function ease(tau, a, b) {
+  tau = Math.min(1, Math.max(0, tau));
+  if (a + b > 1) { const k = 1 / (a + b); a *= k; b *= k; }
+  const vmax = 1 / (1 - a / 2 - b / 2);
+  const ramp = (t, w) => t / 2 - w / (2 * Math.PI) * Math.sin(Math.PI * t / w); // ∫ (1-cos(πs/w))/2 ds
+  let p;
+  if (a > 0 && tau < a) p = ramp(tau, a);
+  else if (b > 0 && tau > 1 - b) p = a / 2 + (1 - b - a) + (b / 2 - ramp(1 - tau, b));
+  else p = a / 2 + (tau - a);
+  return Math.min(1, p * vmax);
+}
+
+function fitView(models, pts) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const add = (x, y) => { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; };
+  for (const p of pts) add(p[0], p[1]);
+  for (const model of models) {
+    for (let i = 0; i < model.N; i += 3) { add(model.CX[i] - model.r, model.CY[i] - model.r); add(model.CX[i] + model.r, model.CY[i] + model.r); add(model.PX[i], model.PY[i]); }
+  }
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, span = Math.max(x1 - x0, y1 - y0, 1e-6);
+  return { cx, cy, span: span / 0.88 };
+}
+
+function updateInfo() {
+  const label = { inside: "внутри", outside: "снаружи" }, ms = cur().models;
+  $("info").textContent = (S.objects.length > 1 ? `объект ${S.sel + 1}: ` : "") + ms.map(m => (ms.length > 1 ? label[m.side] + ": " : "колесо ") + `r = ${m.r.toFixed(3)}, кругов ${m.laps}`).join(" · ");
+}
+let rebuildTimer = 0;
+function rebuild(keepProgress = false) {
+  clearTimeout(rebuildTimer);
+  rebuildTimer = setTimeout(() => {
+    const p = params();
+    // objects sharing one shape share its models: the pattern only depends on the shape and the shared settings
+    const cache = new Map();
+    for (const o of S.objects) {
+      let built = cache.get(o.shape);
+      if (!built) {
+        const sh = { ...p, pts: o.shape.pts, closed: o.shape.closed };
+        const sides = !sh.closed ? ["inside"] : S.side === "both" ? ["inside", "outside"] : [S.side];
+        const models = sides.map(side => { const m = buildModel({ ...sh, side }); if (m) m.side = side; return m; }).filter(Boolean);
+        built = { models, fit: fitView(models, o.shape.pts) };
+        cache.set(o.shape, built);
+      }
+      o.models = built.models; o.fit = built.fit;
+    }
+    S.items = S.objects.flatMap(o => o.models.map(m => ({ o, m })));
+    if (!keepProgress) S.progress = 0;
+    resetTrace(viewR);
+    const label = { inside: "внутри", outside: "снаружи" };
+    updateInfo();
+    const w = $("warn");
+    const all = S.objects.flatMap(o => o.models);
+    const over = [...new Set(all.filter(m => m.overlap).map(m => m.side))], cut = all.some(m => m.cuts);
+    const twoSides = all.some(m => m.side === "outside") && all.some(m => m.side === "inside");
+    const who = S.objects.length > 1 ? " у некоторых объектов" : "";
+    if (over.length) {
+      w.hidden = false; w.style.color = "";
+      w.textContent = (twoSides ? `Колесо ${over.map(s => label[s]).join(" и ")}` : "Колесо") + who + " слишком большое для некоторых изгибов формы и местами заходит на неё. Уменьшите колесо или прибавьте отступ.";
+    } else if (cut) { w.hidden = false; w.textContent = "В вогнутых углах колесо перескакивает с одной стороны угла на другую, как настоящее."; w.style.color = "var(--muted)"; }
+    else w.hidden = true;
+  }, 30);
+}
+
+/* ---------------- rendering ---------------- */
+function hsl(h, s, l) { return `hsl(${h} ${s}% ${l}%)`; }
+function makeRenderer(canvas) {
+  const ctx = canvas.getContext("2d");
+  const trace = document.createElement("canvas");
+  return { canvas, ctx, trace, tctx: trace.getContext("2d"), drawn: [], W: 0, H: 0, short: 0 };
+}
+const viewR = makeRenderer($("view"));
+
+// world → canvas pixels for one object (or for the drawing board while sketching a shape)
+const DRAW_SPAN = 3;
+function objXf(R, o) {
+  const f = o.fit || { cx: 0, cy: 0, span: DRAW_SPAN };
+  return { cx: f.cx, cy: f.cy, k: o.size * R.short / f.span, ox: o.u * R.W, oy: o.v * R.H };
+}
+function drawXf(R) { return { cx: 0, cy: 0, k: R.short / DRAW_SPAN, ox: R.W / 2, oy: R.H / 2 }; }
+function toPx(T, x, y) { return [T.ox + (x - T.cx) * T.k, T.oy - (y - T.cy) * T.k]; }
+function resetTrace(R) {
+  R.W = R.canvas.width; R.H = R.canvas.height; R.short = Math.min(R.W, R.H);
+  R.trace.width = R.W; R.trace.height = R.H;
+  R.tctx.clearRect(0, 0, R.W, R.H);
+  R.drawn = [];
+}
+function colorAt(lk, frac, laps = 1) {
+  if (lk.grad === "solid") return lk.ink;
+  if (lk.cycle === "lap") { const x = (frac * laps) % 1; frac = 1 - Math.abs(2 * x - 1); }
+  else if (lk.cycle === "wave") frac = 1 - Math.abs(2 * frac - 1);
+  if (lk.grad === "rainbow") return hsl((lk.hue + frac * 360) % 360, 85, 66);
+  const st = lk.stops, x = Math.min(0.9999, Math.max(0, frac)) * (st.length - 1), i = Math.floor(x), f = x - i;
+  const a = st[i], b = st[i + 1];
+  return `rgb(${a.map((v, k) => Math.round(v + (b[k] - v) * f)).join(",")})`;
+}
+
+function drawTraceTo(R, items, idxs, lk) {
+  if (idxs.some((idx, j) => idx < (R.drawn[j] || 0))) { R.tctx.clearRect(0, 0, R.W, R.H); R.drawn = []; }
+  const c = R.tctx, scale = R.short / 1000;
+  c.lineWidth = lk.width * scale; c.lineJoin = "round"; c.lineCap = "round";
+  const CH = 160;
+  items.forEach(({ o, m }, j) => {
+    const T = objXf(R, o);
+    const idx = idxs[j], from = R.drawn[j] || 0;
+    for (let s = from; s < idx; s += CH) {
+      const e = Math.min(idx, s + CH);
+      c.strokeStyle = colorAt(lk, s / m.N, m.laps);
+      c.beginPath();
+      let p = toPx(T, m.PX[s], m.PY[s]); c.moveTo(p[0], p[1]);
+      for (let i = s + 1; i <= e; i++) { p = toPx(T, m.PX[i], m.PY[i]); c.lineTo(p[0], p[1]); }
+      c.stroke();
+    }
+    R.drawn[j] = Math.max(from, idx);
+  });
+}
+
+function drawShape(R, T, lk, pts, closed) {
+  const c = R.ctx, scale = R.short / 1000;
+  c.strokeStyle = lk.shapeColor; c.lineWidth = 5 * scale; c.lineJoin = "round"; c.lineCap = "round";
+  c.beginPath();
+  pts.forEach((p, i) => { const q = toPx(T, p[0], p[1]); i ? c.lineTo(q[0], q[1]) : c.moveTo(q[0], q[1]); });
+  if (closed) c.closePath();
+  c.stroke();
+}
+
+function drawWheel(R, T, m, idx, lk) {
+  const op = lk.wheelOpacity;
+  if (op <= 0.001) return;
+  const c = R.ctx, scale = R.short / 1000, wc = lk.wheel.join(",");
+  const rgba = a => `rgba(${wc},${a * op})`;
+  const [cx, cy] = toPx(T, m.CX[idx], m.CY[idx]);
+  const rp = m.r * T.k, a = m.AL[idx];
+  const nt = Math.min(150, m.wheelTeeth);
+  c.save();
+  c.beginPath();
+  if (lk.gear) {
+    // gear outline: trapezoid teeth around the pitch circle, turning with the wheel
+    const h = Math.min(rp * 0.09, Math.PI * rp / nt * 0.9), ro = rp + h * 0.5, ri = rp - h * 0.5;
+    const pitch = TAU / nt;
+    for (let k = 0; k < nt; k++) {
+      const t0 = -(a + pitch * k);
+      const pts = [[ri, t0 - pitch * 0.5], [ri, t0 - pitch * 0.28], [ro, t0 - pitch * 0.16], [ro, t0 + pitch * 0.16], [ri, t0 + pitch * 0.28]];
+      for (const [rr, t] of pts) { const x = cx + rr * Math.cos(t), y = cy + rr * Math.sin(t); k === 0 && rr === ri && t === t0 - pitch * 0.5 ? c.moveTo(x, y) : c.lineTo(x, y); }
+    }
+    c.closePath();
+  } else c.arc(cx, cy, rp, 0, TAU);
+  c.fillStyle = rgba(0.16); c.strokeStyle = rgba(0.85); c.lineWidth = 1.8 * scale; c.lineJoin = "round";
+  c.fill(); c.stroke();
+  if (lk.gear) { // root circle hint
+    c.strokeStyle = rgba(0.22); c.lineWidth = 1 * scale;
+    c.beginPath(); c.arc(cx, cy, rp * 0.78, 0, TAU); c.stroke();
+  } else {
+    c.strokeStyle = rgba(0.55); c.lineWidth = 1.2 * scale;
+    c.beginPath();
+    for (let k = 0; k < nt; k++) { const t = a + TAU * k / nt, co = Math.cos(t), si = -Math.sin(t); c.moveTo(cx + co * rp * 0.93, cy + si * rp * 0.93); c.lineTo(cx + co * rp, cy + si * rp); }
+    c.stroke();
+  }
+  const co = Math.cos(a), si = -Math.sin(a);
+  c.strokeStyle = rgba(0.45); c.lineWidth = 1.2 * scale;
+  for (let q = 0.2; q < 0.95; q += 0.14) { c.beginPath(); c.arc(cx + co * q * rp, cy + si * q * rp, 0.03 * rp, 0, TAU); c.stroke(); }
+  const px = cx + co * m.pen * rp, py = cy + si * m.pen * rp;
+  c.beginPath(); c.moveTo(cx, cy); c.lineTo(px, py); c.stroke();
+  c.fillStyle = rgba(0.85); c.beginPath(); c.arc(cx, cy, 0.04 * rp, 0, TAU); c.fill();
+  const pr = Math.max(4 * scale, 0.05 * rp);
+  c.globalAlpha = op;
+  c.fillStyle = "#fff"; c.strokeStyle = colorAt(lk, idx / m.N, m.laps); c.lineWidth = 2.5 * scale;
+  c.beginPath(); c.arc(px, py, pr, 0, TAU); c.fill(); c.stroke();
+  c.restore();
+}
+
+function idxAt(m, prog) {
+  const target = prog * m.U[m.N - 1];
+  let lo = 0, hi = m.N - 1;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (m.U[mid] <= target) lo = mid; else hi = mid - 1; }
+  return lo;
+}
+
+// tau is the time fraction (0..1); easing turns it into drawing progress
+function renderFrame(R, tau, lk, opts = {}) {
+  const c = R.ctx;
+  c.fillStyle = lk.bg; c.fillRect(0, 0, R.W, R.H);
+  if (opts.pts) { if (opts.pts.length > 1) drawShape(R, drawXf(R), lk, opts.pts, opts.closed); return; }
+  const finished = tau >= 1 || opts.hideWheel;
+  const hideShape = S.items.length && (finished ? lk.hideShapeEnd : lk.hideShapeDraw);
+  if (!hideShape) for (const o of S.objects) if (o.fit && o.shape.pts.length > 1) drawShape(R, objXf(R, o), lk, o.shape.pts, o.shape.closed);
+  if (S.items.length) {
+    const prog = ease(tau, lk.easeIn, lk.easeOut);
+    const idxs = S.items.map(it => idxAt(it.m, prog));
+    drawTraceTo(R, S.items, idxs, lk);
+    c.drawImage(R.trace, 0, 0);
+    if (lk.showWheel && !opts.hideWheel && tau < 1) S.items.forEach((it, j) => drawWheel(R, objXf(R, it.o), it.m, idxs[j], lk));
+  }
+  if (opts.selection && S.objects.length > 1) { // on-screen only, never in the video
+    const b = objBox(R, cur());
+    c.save(); c.setLineDash([6 * R.short / 1000 + 3, 6 * R.short / 1000 + 3]);
+    c.strokeStyle = "rgba(169,184,255,.55)"; c.lineWidth = 1.5 * R.short / 1000 + 0.5;
+    c.strokeRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0); c.restore();
+  }
+}
+// square the object's pattern fills, in canvas pixels
+function objBox(R, o) {
+  const h = o.size * R.short / 2 * 0.94, x = o.u * R.W, y = o.v * R.H;
+  return { x0: x - h, y0: y - h, x1: x + h, y1: y + h };
+}
+
+let exporting = false;
+/* ---------------- sound: Shepard–Risset glissando ---------------- */
+// N sine voices an octave apart glide together; each fades in at the bottom and out at the top,
+// so the pitch seems to rise forever. `phase` is measured in octaves.
+const SH = { N: 8, f0: 27.5 };
+const TIMBRES = { pure: [1], warm: [1, 0.35, 0, 0.12], glass: [1, 0, 0, 0.3, 0, 0, 0, 0.15] };
+function soundSettings() {
+  return { on: $("sound").checked, dir: +$("pitchDir").value, rate: +$("pitchRate").value / 100, vol: +$("vol").value / 100, timbre: $("timbre").value, fx: +$("slowFx").value / 100 };
+}
+function voice(k, phase) {
+  const x = ((k + phase) % SH.N + SH.N) % SH.N;
+  return { x, f: SH.f0 * Math.pow(2, x), a: 0.5 - 0.5 * Math.cos(TAU * x / SH.N) };
+}
+// Loudness near the end: fades with the wheel's slow-down and reaches silence exactly when it stops.
+// Without a slow-down, a short 120 ms fade ends at the stop so there is no click.
+function endGain(tau, lk) {
+  if (tau >= 1) return 0;
+  let g = Math.min(1, (1 - tau) * lk.dur / 0.12);
+  let b = lk.easeOut; if (lk.easeIn + b > 1) b /= (lk.easeIn + b);
+  if (b > 0 && tau > 1 - b) g *= Math.sqrt(speedAt(tau, lk));
+  return g;
+}
+// record-player effect: when the wheel slows, the whole chord sinks (up to 1.5 octaves at a stop)
+function slowTranspose(speed, fx) { return Math.pow(2, -1.5 * fx * (1 - speed)); }
+// relative drawing speed at time fraction tau: 1 while cruising, 0 when stopped
+function speedAt(tau, lk) {
+  if (tau <= 0 || tau >= 1) return 0;
+  let a = lk.easeIn, b = lk.easeOut;
+  if (a + b > 1) { const k = 1 / (a + b); a *= k; b *= k; }
+  if (a > 0 && tau < a) return (1 - Math.cos(Math.PI * tau / a)) / 2;
+  if (b > 0 && tau > 1 - b) return (1 - Math.cos(Math.PI * (1 - tau) / b)) / 2;
+  return 1;
+}
+
+const live = { ctx: null, master: null, voices: [], phase: 0, timbre: null };
+// iPhone mutes Web Audio while the ring/silent switch is on unless the page asks for media playback.
+let unlockEl = null;
+function silentWavUrl() {
+  const sr = 8000, n = 800, b = new ArrayBuffer(44 + n * 2), v = new DataView(b);
+  const w = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+  w(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); w(8, "WAVE"); w(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, "data"); v.setUint32(40, n * 2, true);
+  return URL.createObjectURL(new Blob([b], { type: "audio/wav" }));
+}
+function unlockAudio() {
+  try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {}
+  try {
+    if (!unlockEl) { unlockEl = document.createElement("audio"); unlockEl.src = silentWavUrl(); unlockEl.loop = true; unlockEl.setAttribute("playsinline", ""); }
+    const p = unlockEl.play(); if (p && p.catch) p.catch(() => {});
+  } catch (e) {}
+}
+function liveEnsure(snd) {
+  if (!live.ctx) {
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return false;
+    live.ctx = new AC();
+    live.master = live.ctx.createGain(); live.master.gain.value = 0;
+    live.master.connect(live.ctx.destination);
+  }
+  if (live.timbre !== snd.timbre) {
+    for (const v of live.voices) { try { v.osc.stop(); } catch (e) {} v.osc.disconnect(); v.g.disconnect(); }
+    const h = TIMBRES[snd.timbre], re = new Float32Array(h.length + 1), im = new Float32Array(h.length + 1);
+    h.forEach((v, i) => { im[i + 1] = v; });
+    const wave = live.ctx.createPeriodicWave(re, im);
+    live.voices = [];
+    for (let k = 0; k < SH.N; k++) {
+      const osc = live.ctx.createOscillator(), g = live.ctx.createGain();
+      osc.setPeriodicWave(wave); g.gain.value = 0;
+      osc.connect(g); g.connect(live.master); osc.start();
+      live.voices.push({ osc, g, x: null });
+    }
+    live.timbre = snd.timbre;
+  }
+  if (live.ctx.state === "suspended") live.ctx.resume().catch(() => {});
+  return true;
+}
+function liveUpdate(dt, active, tau, lk) {
+  const snd = soundSettings();
+  if (!live.ctx && !snd.on) return;
+  if (!snd.on || !active) { if (live.master) live.master.gain.setTargetAtTime(0, live.ctx.currentTime, 0.012); return; }
+  if (!liveEnsure(snd)) return;
+  const lat = (live.ctx.outputLatency || 0) + (live.ctx.baseLatency || 0) + 0.02;
+  const ahead = Math.min(1, tau + lat / lk.dur); // what will be heard is what the screen shows
+  const sp = speedAt(ahead, lk), tr = slowTranspose(sp, snd.fx);
+  live.phase += snd.dir * snd.rate * speedAt(tau, lk) * dt;
+  const t = live.ctx.currentTime, norm = 1.6 / SH.N;
+  live.master.gain.setTargetAtTime(snd.vol * 0.5 * endGain(ahead, lk), t, 0.012);
+  live.voices.forEach((v, k) => {
+    const { x, f: f1, a } = voice(k, live.phase), f = f1 * tr;
+    if (v.x === null || Math.abs(x - v.x) > SH.N / 2) v.osc.frequency.setValueAtTime(f, t); // wrapped around: jump while silent
+    else v.osc.frequency.setTargetAtTime(f, t, 0.02);
+    v.g.gain.setTargetAtTime(a * norm, t, 0.02);
+    v.x = x;
+  });
+}
+
+// Offline render for the video: one value of phase per video frame, interpolated per sample.
+function renderSoundtrack(lk, fps, frames, holdFrames, sr) {
+  const snd = soundSettings();
+  const total = frames + holdFrames, n = Math.ceil(total / fps * sr);
+  const ph = new Float64Array(total + 1), tr = new Float64Array(total + 1);
+  tr[0] = slowTranspose(0, snd.fx);
+  for (let f = 0; f < total; f++) {
+    const sp = speedAt(Math.min(1, (f + 1) / frames), lk);
+    ph[f + 1] = ph[f] + snd.dir * snd.rate * sp / fps; tr[f + 1] = slowTranspose(sp, snd.fx);
+  }
+  const harm = TIMBRES[snd.timbre];
+  const out = new Float32Array(n), acc = new Float64Array(SH.N);
+  const norm = 1.6 / SH.N * snd.vol * 0.5;
+  const tEnd = n / sr, fadeIn = 0.15, drawEnd = frames / fps;
+  for (let i = 0; i < n; i++) {
+    const t = i / sr, fp = t * fps, f = Math.min(total - 1, Math.floor(fp)), phase = ph[f] + (ph[f + 1] - ph[f]) * (fp - f), trs = tr[f] + (tr[f + 1] - tr[f]) * (fp - f);
+    const env = Math.min(1, t / fadeIn) * endGain(Math.min(1, (t * fps + 1) / frames), lk);
+    if (env <= 0) { out[i] = 0; continue; }
+    let sum = 0;
+    for (let k = 0; k < SH.N; k++) {
+      const { f: f1, a } = voice(k, phase), fr = f1 * trs;
+      acc[k] += TAU * fr / sr; if (acc[k] > 1e6) acc[k] %= TAU;
+      if (a < 1e-4) continue;
+      let w = 0;
+      for (let h = 0; h < harm.length; h++) if (harm[h]) { if (fr * (h + 1) < sr / 2) w += harm[h] * Math.sin(acc[k] * (h + 1)); }
+      sum += a * w;
+    }
+    out[i] = sum * norm * env;
+  }
+  return out;
+}
+async function pickAudioCodec(sr) {
+  if (typeof AudioEncoder === "undefined") return null;
+  for (const [codec, mux] of [["mp4a.40.2", "aac"], ["opus", "opus"]]) {
+    const c = { codec, sampleRate: sr, numberOfChannels: 2, bitrate: 160000 };
+    try { if ((await AudioEncoder.isConfigSupported(c)).supported) return { cfg: c, mux }; } catch (e) {}
+  }
+  return null;
+}
+
+/* ---------------- canvas sizing & loop ---------------- */
+function resizeView() {
+  const cv = $("view"), rect = cv.getBoundingClientRect();
+  const k = Math.min(window.devicePixelRatio || 1, 2000 / Math.max(rect.width, rect.height, 1));
+  const w = Math.round(rect.width * k), h = Math.round(rect.height * k);
+  if (w > 0 && h > 0 && (cv.width !== w || cv.height !== h)) { cv.width = w; cv.height = h; resetTrace(viewR); }
+}
+new ResizeObserver(resizeView).observe($("view"));
+
+function tick(t) {
+  const lk = look();
+  const dt = S.lastT ? (t - S.lastT) / 1000 : 0; S.lastT = t;
+  const running = S.playing && S.items.length && !S.drawMode && !exporting;
+  liveUpdate(dt, running && S.progress < 1, S.progress, lk);
+  if (S.playing && S.items.length && !S.drawMode) {
+    S.progress = Math.min(1, S.progress + dt / lk.dur);
+    if (S.progress >= 1) setPlaying(false);
+    $("scrub").value = Math.round(S.progress * 1000);
+  }
+  if (S.drawMode) {
+    const d = S.drawing;
+    renderFrame(viewR, 0, lk, { pts: d && d.length ? d : [[0, 0]], closed: $("closed").checked && S.drawMode === "poly" });
+    if (d && S.drawMode === "poly") { // vertex dots
+      const c = viewR.ctx, T = drawXf(viewR); c.fillStyle = lk.shapeColor;
+      for (const p of d) { const q = toPx(T, p[0], p[1]); c.beginPath(); c.arc(q[0], q[1], 4 * viewR.short / 1000 + 2, 0, TAU); c.fill(); }
+    }
+  } else renderFrame(viewR, S.progress, lk, { selection: true });
+  requestAnimationFrame(tick);
+}
+function setPlaying(p) { S.playing = p; $("play").textContent = p ? "⏸" : "▶"; $("play").setAttribute("aria-label", p ? "Пауза" : "Играть"); }
+
+/* ---------------- drawing your own shape ---------------- */
+function canvasPx(ev) {
+  const cv = $("view"), rect = cv.getBoundingClientRect();
+  return [(ev.clientX - rect.left) / rect.width * cv.width, (ev.clientY - rect.top) / rect.height * cv.height];
+}
+function canvasToWorld(ev) {
+  const [x, y] = canvasPx(ev), T = drawXf(viewR);
+  return [(x - T.ox) / T.k, -(y - T.oy) / T.k];
+}
+function startDraw(mode) {
+  S.drawMode = mode; S.drawing = [];
+  $("drawFree").setAttribute("aria-pressed", mode === "free");
+  $("drawPoly").setAttribute("aria-pressed", mode === "poly");
+  for (const b of document.querySelectorAll("#presets button")) b.setAttribute("aria-pressed", "false");
+  $("view").classList.add("drawing");
+  $("polyDone").hidden = mode !== "poly";
+  $("drawNote").hidden = false;
+  $("drawNote").textContent = mode === "free"
+    ? "Ведите мышью или пальцем по холсту. Если конец рядом с началом, контур замкнётся сам."
+    : "Щёлкайте по холсту, ставя вершины. Нажмите «Готово» или дважды щёлкните, чтобы закончить.";
+  setPlaying(false);
+}
+function endDraw() {
+  const d = S.drawing; const mode = S.drawMode;
+  S.drawMode = null; $("view").classList.remove("drawing"); $("polyDone").hidden = true; $("drawNote").hidden = true;
+  $("drawFree").setAttribute("aria-pressed", "false"); $("drawPoly").setAttribute("aria-pressed", "false");
+  if (!d || d.length < 2) { rebuild(); setPlaying(true); return; }
+  let pts = d, closed = $("closed").checked;
+  if (mode === "free") {
+    const span = DRAW_SPAN;
+    if (Math.hypot(d[0][0] - d.at(-1)[0], d[0][1] - d.at(-1)[1]) < span * 0.05) { closed = true; $("closed").checked = true; }
+    else { closed = false; $("closed").checked = false; }
+    pts = smoothPath(d, closed, +$("smooth").value, span / 300);
+    cur().rawFree = { pts: d, closed };
+  } else cur().rawFree = null;
+  // normalise to [-1,1] so presets and drawings behave alike
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const p of pts) { x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]); }
+  const c0 = (x0 + x1) / 2, c1 = (y0 + y1) / 2, sc = 2 / Math.max(x1 - x0, y1 - y0, 1e-6);
+  const norm = q => q.map(p => [(p[0] - c0) * sc, (p[1] - c1) * sc]);
+  const o = cur();
+  o.shape = { pts: norm(pts), closed };
+  if (o.rawFree) o.rawFree = { pts: norm(o.rawFree.pts), closed, spacing: DRAW_SPAN / 300 * sc };
+  o.preset = null;
+  refreshShapeUI();
+  rebuild(); setPlaying(true);
+}
+function resample(pts, closed, step) {
+  const o = [pts[0]]; let carry = 0; const n = pts.length;
+  for (let i = 0; i < (closed ? n : n - 1); i++) {
+    const a = pts[i], b = pts[(i + 1) % n], l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    let t = step - carry;
+    while (t <= l) { o.push([a[0] + (b[0] - a[0]) * t / l, a[1] + (b[1] - a[1]) * t / l]); t += step; }
+    carry = l - (t - step);
+  }
+  if (!closed) o.push(pts[n - 1]);
+  return o;
+}
+function smoothPath(pts, closed, amount, step) {
+  let p = resample(pts, closed, step);
+  const win = Math.round(amount * 3);
+  for (let pass = 0; pass < 3 && win > 0; pass++) {
+    const n = p.length, q = [];
+    for (let i = 0; i < n; i++) {
+      let sx = 0, sy = 0, c = 0;
+      for (let k = -win; k <= win; k++) {
+        let j = i + k;
+        if (closed) j = (j % n + n) % n; else j = Math.max(0, Math.min(n - 1, j));
+        sx += p[j][0]; sy += p[j][1]; c++;
+      }
+      q.push((!closed && (i === 0 || i === n - 1)) ? p[i] : [sx / c, sy / c]);
+    }
+    p = q;
+  }
+  return resample(p, closed, step * 2);
+}
+
+const cv = $("view");
+function hitObject(ev) {
+  const [x, y] = canvasPx(ev);
+  // the selected object wins when boxes overlap, then the topmost (last added)
+  const order = [S.sel, ...S.objects.map((_, i) => S.objects.length - 1 - i).filter(i => i !== S.sel)];
+  return order.find(i => { const b = objBox(viewR, S.objects[i]); return x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1; }) ?? -1;
+}
+let drag = null;
+cv.addEventListener("pointerdown", ev => {
+  if (!S.drawMode) {
+    const i = hitObject(ev);
+    if (i < 0) return;
+    ev.preventDefault();
+    selectObject(i);
+    const [x, y] = canvasPx(ev), o = cur();
+    drag = { id: ev.pointerId, dx: o.u * cv.width - x, dy: o.v * cv.height - y };
+    cv.setPointerCapture(ev.pointerId); cv.classList.add("grabbing");
+    return;
+  }
+  ev.preventDefault();
+  const w = canvasToWorld(ev);
+  if (S.drawMode === "free") { S.drawing = [w]; cv.setPointerCapture(ev.pointerId); S.pen = true; }
+  else {
+    const d = S.drawing;
+    if (d.length && Math.hypot(d.at(-1)[0] - w[0], d.at(-1)[1] - w[1]) < DRAW_SPAN * 0.01) return;
+    if (d.length > 2 && Math.hypot(d[0][0] - w[0], d[0][1] - w[1]) < DRAW_SPAN * 0.025) { $("closed").checked = true; endDraw(); return; }
+    d.push(w);
+  }
+});
+cv.addEventListener("pointermove", ev => {
+  if (!S.drawMode) {
+    if (drag && drag.id === ev.pointerId) {
+      const [x, y] = canvasPx(ev), o = cur();
+      o.u = Math.min(1, Math.max(0, (x + drag.dx) / cv.width)); o.v = Math.min(1, Math.max(0, (y + drag.dy) / cv.height));
+      resetTrace(viewR);
+    } else if (ev.pointerType === "mouse") cv.classList.toggle("grab", S.objects.length > 1 && hitObject(ev) >= 0);
+    return;
+  }
+  if (S.drawMode !== "free" || !S.pen) return;
+  const w = canvasToWorld(ev), d = S.drawing, l = d.at(-1);
+  if (Math.hypot(l[0] - w[0], l[1] - w[1]) > DRAW_SPAN * 0.002) d.push(w);
+});
+cv.addEventListener("pointerup", () => { if (S.drawMode === "free" && S.pen) { S.pen = false; endDraw(); } });
+const endDrag = () => { drag = null; cv.classList.remove("grabbing"); };
+cv.addEventListener("pointerup", endDrag);
+cv.addEventListener("pointercancel", endDrag);
+cv.addEventListener("wheel", ev => {
+  if (S.drawMode) return;
+  const i = hitObject(ev);
+  if (i < 0) return;
+  ev.preventDefault();
+  selectObject(i);
+  setObjSize(cur().size * Math.exp(-ev.deltaY * 0.0015));
+}, { passive: false });
+cv.addEventListener("dblclick", () => { if (S.drawMode === "poly") endDraw(); });
+$("polyDone").addEventListener("click", () => endDraw());
+$("drawFree").addEventListener("click", () => S.drawMode === "free" ? endDraw() : startDraw("free"));
+$("drawPoly").addEventListener("click", () => S.drawMode === "poly" ? endDraw() : startDraw("poly"));
+
+/* ---------------- controls wiring ---------------- */
+const presetBox = $("presets");
+for (const name of Object.keys(PRESETS)) {
+  const b = document.createElement("button");
+  b.textContent = name;
+  b.addEventListener("click", () => {
+    if (S.drawMode) { S.drawMode = null; S.drawing = null; $("view").classList.remove("drawing"); $("polyDone").hidden = true; $("drawNote").hidden = true; }
+    const o = cur();
+    o.shape = PRESETS[name](); o.preset = name; o.rawFree = null;
+    refreshShapeUI();
+    rebuild(); setPlaying(true);
+  });
+  presetBox.appendChild(b);
+}
+$("closed").addEventListener("change", () => {
+  if (S.drawMode) return;
+  const o = cur();
+  if (o.shape.pts.length < 3) { $("closed").checked = false; return; }
+  o.shape = { pts: o.shape.pts, closed: $("closed").checked };
+  rebuild(); setPlaying(true);
+});
+$("smooth").addEventListener("input", () => {
+  syncOutputs();
+  const o = cur();
+  if (o.rawFree) {
+    const pts = smoothPath(o.rawFree.pts, o.rawFree.closed, +$("smooth").value, o.rawFree.spacing);
+    o.shape = { pts, closed: o.rawFree.closed }; rebuild(); setPlaying(true);
+  }
+});
+/* ---------------- canvas format & objects ---------------- */
+function refreshShapeUI() {
+  const o = cur();
+  for (const x of presetBox.children) x.setAttribute("aria-pressed", x.textContent === o.preset);
+  $("closed").checked = o.shape.closed;
+  $("shapeTitle").textContent = S.objects.length > 1 ? `Форма объекта ${S.sel + 1}` : "Форма";
+  const list = $("objList"); list.textContent = "";
+  if (S.objects.length > 1) S.objects.forEach((ob, i) => {
+    const b = document.createElement("button");
+    b.textContent = `${i + 1}: ${ob.preset || "своя"}`; b.setAttribute("aria-pressed", i === S.sel);
+    b.addEventListener("click", () => selectObject(i));
+    list.appendChild(b);
+  });
+  list.hidden = S.objects.length < 2;
+  $("delObj").hidden = $("layoutObj").hidden = S.objects.length < 2;
+  $("addObj").disabled = S.objects.length >= MAX_OBJECTS;
+  $("objSize").value = Math.round(o.size * 100); $("objSizeOut").textContent = Math.round(o.size * 100) + "%";
+}
+function selectObject(i) {
+  if (S.drawMode || i === S.sel) return;
+  S.sel = i; refreshShapeUI(); updateInfo();
+}
+function setObjSize(v) { cur().size = Math.min(1.5, Math.max(0.1, v)); refreshShapeUI(); resetTrace(viewR); }
+// even grid that gives each object the biggest possible cell on this canvas
+function layoutObjects() {
+  const a = ASPECTS[S.aspect], n = S.objects.length;
+  let best = { cell: -1 };
+  for (let cols = 1; cols <= n; cols++) {
+    const rows = Math.ceil(n / cols), cell = Math.min(a.w / cols, a.h / rows);
+    if (cell > best.cell + 1e-9) best = { cols, rows, cell };
+  }
+  const { cols, rows, cell } = best, short = Math.min(a.w, a.h);
+  S.objects.forEach((o, i) => {
+    const r = Math.floor(i / cols), inRow = Math.min(cols, n - r * cols), c = i - r * cols;
+    o.u = (a.w / 2 + (c - (inRow - 1) / 2) * cell) / a.w;
+    o.v = (a.h / 2 + (r - (rows - 1) / 2) * cell) / a.h;
+    o.size = cell / short;
+  });
+  refreshShapeUI(); resetTrace(viewR);
+}
+function setAspect(key) {
+  S.aspect = key; const a = ASPECTS[key];
+  for (const b of $("aspects").children) b.setAttribute("aria-pressed", b.dataset.key === key);
+  const wrap = document.querySelector(".canvas-wrap");
+  wrap.style.setProperty("--ar", `${a.w} / ${a.h}`); wrap.style.setProperty("--arn", a.w / a.h);
+  document.querySelector(".transport").style.setProperty("--arn", a.w / a.h);
+  const res = $("res");
+  for (const op of res.options) { const [w, h] = outDims(+op.value); op.textContent = `${w}×${h}`; }
+  layoutObjects(); resizeView();
+}
+// output size from the short side: 1080 → 1080×1080, 1920×1080 or 1080×1920
+function outDims(short) {
+  const a = ASPECTS[S.aspect], long = Math.round(short * Math.max(a.w, a.h) / Math.min(a.w, a.h) / 2) * 2;
+  return a.w >= a.h ? [a.w === a.h ? short : long, short] : [short, long];
+}
+for (const [key, a] of Object.entries(ASPECTS)) {
+  const b = document.createElement("button");
+  b.textContent = a.name; b.dataset.key = key; b.setAttribute("aria-pressed", key === S.aspect);
+  b.addEventListener("click", () => setAspect(key));
+  $("aspects").appendChild(b);
+}
+$("addObj").addEventListener("click", () => {
+  if (S.drawMode || S.objects.length >= MAX_OBJECTS) return;
+  const o = cur();
+  S.objects.push(newObject(o.shape, o.preset, o.rawFree));
+  S.sel = S.objects.length - 1;
+  layoutObjects(); rebuild(); setPlaying(true);
+});
+$("delObj").addEventListener("click", () => {
+  if (S.drawMode || S.objects.length < 2) return;
+  S.objects.splice(S.sel, 1); S.sel = Math.min(S.sel, S.objects.length - 1);
+  refreshShapeUI(); rebuild(true);
+});
+$("layoutObj").addEventListener("click", layoutObjects);
+$("objSize").addEventListener("input", () => setObjSize(+$("objSize").value / 100));
+
+function setSide(s) { S.side = s; for (const [id, v] of [["sideIn", "inside"], ["sideOut", "outside"], ["sideBoth", "both"]]) $(id).setAttribute("aria-pressed", s === v); rebuild(); setPlaying(true); }
+$("sideBoth").addEventListener("click", () => setSide("both"));
+$("sideIn").addEventListener("click", () => setSide("inside"));
+$("sideOut").addEventListener("click", () => setSide("outside"));
+for (const id of ["wheel", "ring", "gap", "pen", "phase", "laps"]) $(id).addEventListener("input", () => { syncOutputs(); rebuild(); setPlaying(true); });
+for (const id of ["dur", "easeIn", "easeOut", "wheelAlpha", "gearTeeth", "pitchRate", "vol", "slowFx"]) $(id).addEventListener("input", syncOutputs);
+for (const id of ["hue", "width", "grad", "gradCycle", "c1", "c2", "c3", "inkColor", "bg", "shapeColor", "wheelColor"]) $(id).addEventListener("input", () => { syncOutputs(); resetTrace(viewR); });
+$("sound").addEventListener("change", () => { if ($("sound").checked) { unlockAudio(); liveEnsure(soundSettings()); if (S.progress >= 1) { S.progress = 0; setPlaying(true); } } });
+// iOS only starts audio from inside a tap, so wake it on every transport tap
+for (const id of ["play", "restart", "finish", "scrub"]) $(id).addEventListener("pointerdown", () => { if ($("sound").checked) { unlockAudio(); liveEnsure(soundSettings()); } });
+$("play").addEventListener("click", () => { if (S.progress >= 1) S.progress = 0; setPlaying(!S.playing); });
+$("restart").addEventListener("click", () => { S.progress = 0; setPlaying(true); });
+$("finish").addEventListener("click", () => { S.progress = 1; setPlaying(false); $("scrub").value = 1000; });
+$("scrub").addEventListener("input", () => { S.progress = +$("scrub").value / 1000; setPlaying(false); });
+
+/* ---------------- export ---------------- */
+let downloadsP = null;
+function getDownloads() { if (!downloadsP) downloadsP = (window.claude && window.claude.use) ? window.claude.use("downloads").catch(() => null) : Promise.resolve(null); return downloadsP; }
+
+async function offer(blob, filename, kind) {
+  const dl = await getDownloads();
+  const note = $("exportNote"), keep = note.textContent.startsWith("Готово") ? note.textContent + " " : "";
+  if (dl) {
+    try { await dl.save({ filename, data: blob }); note.textContent = keep + "Файл передан на сохранение."; return; }
+    catch (e) {
+      if (e && e.code === "declined") { note.textContent = keep + "Сохранение отменено. Файл можно открыть ниже."; }
+      else if (e && e.code === "rate_limited") { note.textContent = keep + "Окно сохранения уже открыто."; return; }
+      else note.textContent = keep + "Сохранить файл отсюда не получилось. Он показан ниже: правый клик, «Сохранить как».";
+    }
+  } else {
+    // ordinary website: a normal browser download
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    note.textContent = keep + "Файл скачан. Если загрузка не началась, он показан ниже: правый клик, «Сохранить как».";
+  }
+  const box = $("result"); box.textContent = "";
+  const url = URL.createObjectURL(blob);
+  const el = document.createElement(kind === "video" ? "video" : "img");
+  el.src = url; if (kind === "video") { el.controls = true; el.loop = true; el.muted = true; el.playsInline = true; } else { el.style.width = "100%"; el.style.borderRadius = "6px"; }
+  box.appendChild(el);
+}
+
+function exportRenderer([w, h]) {
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  const R = makeRenderer(c); resetTrace(R); return R;
+}
+
+$("exportPng").addEventListener("click", async () => {
+  if (!S.items.length) return;
+  const R = exportRenderer(outDims(+$("res").value)), lk = look();
+  renderFrame(R, 1, lk, { hideWheel: true });
+  R.canvas.toBlob(b => offer(b, "spirograph.png", "image"), "image/png");
+});
+
+// Encode the soundtrack up front and check it really produced audio; some browsers (Safari) report
+// support but return nothing, and then we must record in real time instead.
+async function encodeSoundtrack(pcm, ac) {
+  const SR = ac.cfg.sampleRate;
+  for (const format of ["f32-planar", "f32"]) {
+    const chunks = []; let aerr = null;
+    try {
+      const aenc = new AudioEncoder({ output: (ch, meta) => chunks.push({ ch, meta }), error: e => { aerr = e; } });
+      aenc.configure(ac.cfg);
+      const CH = 4800;
+      for (let i = 0; i < pcm.length; i += CH) {
+        const len = Math.min(CH, pcm.length - i), buf = new Float32Array(len * 2);
+        if (format === "f32-planar") { buf.set(pcm.subarray(i, i + len), 0); buf.set(pcm.subarray(i, i + len), len); }
+        else for (let j = 0; j < len; j++) buf[2 * j] = buf[2 * j + 1] = pcm[i + j];
+        aenc.encode(new AudioData({ format, sampleRate: SR, numberOfFrames: len, numberOfChannels: 2, timestamp: Math.round(i / SR * 1e6), data: buf }));
+        if (aerr) throw aerr;
+      }
+      await aenc.flush(); aenc.close();
+      if (aerr) throw aerr;
+      const bytes = chunks.reduce((n, c) => n + c.ch.byteLength, 0);
+      const expected = pcm.length / SR * 8000 * 0.2; // at least ~13 kbit/s worth of data
+      if (chunks.length > 2 && bytes > expected) return chunks;
+    } catch (e) { console.warn("audio encode", format, e); }
+  }
+  return null;
+}
+
+$("exportVideo").addEventListener("click", async () => {
+  if (!S.items.length || exporting) return;
+  // wake audio while we are still inside the tap (iPhone allows it only here)
+  if (soundSettings().on) { unlockAudio(); liveEnsure(soundSettings()); }
+  exporting = true; $("exportVideo").disabled = true;
+  const bar = $("exportBar"), fill = bar.firstElementChild, note = $("exportNote");
+  bar.hidden = false; fill.style.width = "0"; $("result").textContent = "";
+  const lk = look(), [W, H] = outDims(+$("res").value), fps = 30;
+  const frames = Math.round(lk.dur * fps), holdFrames = Math.round((+$("hold").value || 0) * fps);
+  const total = frames + holdFrames;
+  const R = exportRenderer([W, H]);
+  const frameAt = f => renderFrame(R, Math.min(1, (f + 1) / frames), lk, { hideWheel: f >= frames - 1 });
+  try {
+    let blob, name, audioMissing = soundSettings().on;
+    const canWC = typeof VideoEncoder !== "undefined" && window.Mp4Muxer;
+    let cfg = null;
+    if (canWC) {
+      // H.264 level 4.0 tops out at 8192 macroblocks (1920×1080); bigger frames need level 5.1
+      const big = Math.ceil(W / 16) * Math.ceil(H / 16) > 8192;
+      const codecs = big ? ["avc1.640033", "avc1.4d0033", "avc1.42e033", "vp09.00.50.08"] : ["avc1.640028", "avc1.4d0028", "avc1.42e028", "vp09.00.40.08"];
+      const bitrate = Math.round(Math.min(30e6, Math.max(7e6, 12e6 * W * H / (1080 * 1080))));
+      for (const codec of codecs) {
+        const c = { codec, width: W, height: H, bitrate, framerate: fps };
+        try { if ((await VideoEncoder.isConfigSupported(c)).supported) { cfg = c; break; } } catch (e) {}
+      }
+    }
+    const SR = 48000, snd = soundSettings();
+    let ac = cfg && snd.on ? await pickAudioCodec(SR) : null, audioChunks = null;
+    if (ac) {
+      note.textContent = "Синтезирую звук…"; await new Promise(r => setTimeout(r, 0));
+      audioChunks = await encodeSoundtrack(renderSoundtrack(lk, fps, frames, holdFrames, SR), ac);
+      if (!audioChunks) ac = null;
+    }
+    if (cfg && (!snd.on || ac)) {
+      note.textContent = "Рендерю кадры…";
+      const muxer = new Mp4Muxer.Muxer({ target: new Mp4Muxer.ArrayBufferTarget(), video: { codec: cfg.codec.startsWith("vp09") ? "vp9" : "avc", width: W, height: H, frameRate: fps },
+        audio: ac ? { codec: ac.mux, sampleRate: SR, numberOfChannels: 2 } : undefined, fastStart: "in-memory" });
+      if (ac) { for (const { ch, meta } of audioChunks) muxer.addAudioChunk(ch, meta); audioMissing = false; S.lastExport = "быстро, звук " + ac.mux; }
+      else S.lastExport = "быстро, без звука";
+      let err = null;
+      const enc = new VideoEncoder({ output: (ch, meta) => muxer.addVideoChunk(ch, meta), error: e => { err = e; } });
+      enc.configure(cfg);
+      for (let f = 0; f < total; f++) {
+        frameAt(f);
+        const vf = new VideoFrame(R.canvas, { timestamp: Math.round(f * 1e6 / fps), duration: Math.round(1e6 / fps) });
+        enc.encode(vf, { keyFrame: f % (fps * 2) === 0 }); vf.close();
+        while (enc.encodeQueueSize > 8) await new Promise(r => setTimeout(r, 4));
+        if (err) throw err;
+        if (f % 6 === 0) { fill.style.width = (100 * f / total).toFixed(1) + "%"; await new Promise(r => setTimeout(r, 0)); }
+      }
+      await enc.flush(); muxer.finalize();
+      blob = new Blob([muxer.target.buffer], { type: "video/mp4" }); name = "spirograph.mp4";
+    } else {
+      // fallback: record in real time
+      note.textContent = `Записываю в реальном времени, это займёт ${Math.round(total / fps)} с. Не уходите со страницы…`;
+      const stream = R.canvas.captureStream(fps);
+      let actx = null, src = null;
+      if (snd.on) {
+        // reuse the audio context unlocked by the tap; a fresh one would stay silent on iPhone
+        if (live.ctx || liveEnsure(snd)) {
+          actx = live.ctx;
+          const pcm = renderSoundtrack(lk, fps, frames, holdFrames, actx.sampleRate);
+          const buf = actx.createBuffer(1, pcm.length, actx.sampleRate); buf.copyToChannel(pcm, 0);
+          const dest = actx.createMediaStreamDestination();
+          src = actx.createBufferSource(); src.buffer = buf; src.connect(dest);
+          for (const t of dest.stream.getAudioTracks()) stream.addTrack(t);
+          if (actx.state === "suspended") await actx.resume().catch(() => {});
+        }
+      }
+      const withAudio = !!src;
+      const mime = (withAudio
+        ? ["video/mp4;codecs=avc1,mp4a.40.2", "video/mp4", "video/webm;codecs=vp9,opus", "video/webm"]
+        : ["video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm"]).find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m));
+      if (!mime) throw new Error("no recorder");
+      const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 10e6 });
+      const chunks = []; rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+      const done = new Promise(r => rec.onstop = r);
+      rec.start();
+      if (src) src.start();
+      if (withAudio) audioMissing = false;
+      const t0 = performance.now();
+      await new Promise(res => {
+        const step = () => {
+          const f = Math.floor((performance.now() - t0) / 1000 * fps);
+          if (f >= total) { res(); return; }
+          frameAt(f); fill.style.width = (100 * f / total).toFixed(1) + "%";
+          requestAnimationFrame(step);
+        };
+        step();
+      });
+      rec.stop(); await done;
+      S.lastExport = "в реальном времени, " + mime;
+      blob = new Blob(chunks, { type: mime.split(";")[0] }); name = mime.includes("mp4") ? "spirograph.mp4" : "spirograph.webm";
+    }
+    fill.style.width = "100%";
+    note.textContent = `Готово: ${(blob.size / 1048576).toFixed(1)} МБ, запись: ${S.lastExport || "?"}.` + (audioMissing ? " Звук не добавлен: этот браузер не умеет кодировать звук." : "");
+    await offer(blob, name, "video");
+  } catch (e) {
+    note.textContent = "Не получилось собрать видео в этом браузере. Попробуйте Chrome или Edge.";
+    console.error(e);
+  } finally {
+    exporting = false; $("exportVideo").disabled = false;
+    setTimeout(() => { bar.hidden = true; }, 1500);
+  }
+});
+
+/* ---------------- start ---------------- */
+for (const [k, g] of Object.entries(GRADIENTS)) { const o = document.createElement("option"); o.value = k; o.textContent = g.name; $("grad").appendChild(o); }
+syncOutputs();
+refreshShapeUI();
+resizeView();
+rebuild();
+requestAnimationFrame(tick);
+window.__spiro = { S, buildModel, params, setAspect, layoutObjects, outDims };
+})();
+</script>

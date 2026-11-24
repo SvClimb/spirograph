@@ -109,7 +109,7 @@ input[type=number]{width:70px;font-family:var(--f-num)}
         <label for="objRot">Поворот выбранного объекта</label><output id="objRotOut"></output>
         <input type="range" id="objRot" min="-180" max="180" step="1" value="0">
       </div>
-      <p class="note" id="objNote">Все объекты рисуются одновременно с одинаковыми настройками. Перетаскивайте их по холсту мышью или пальцем, колёсико мыши над объектом меняет его размер, а за уголки рамки его можно повернуть (с Shift шагами по 15°). «Центрировать» вписывает весь готовый рисунок в холст по центру. С привязкой к сетке центр объекта при перетаскивании прилипает к узлам сетки (число клеток считается по короткой стороне), линии сетки видны только здесь, в видео их нет.</p>
+      <p class="note" id="objNote">Все объекты рисуются одновременно с одинаковыми настройками. Перетаскивайте их по холсту мышью или пальцем, колёсико мыши над объектом меняет его размер, а за уголки рамки его можно повернуть (с Shift шагами по 15°). Клик по пустому месту прячет рамку. «Центрировать» вписывает весь готовый рисунок в холст по центру. С привязкой к сетке центр объекта при перетаскивании прилипает к узлам сетки (число клеток считается по короткой стороне), линии сетки видны только здесь, в видео их нет.</p>
     </section>
 
     <section>
@@ -307,7 +307,7 @@ const S = {
   side: "inside",
   drawMode: null, drawing: null,
   items: [],
-  progress: 1, playing: false, lastT: 0, snap: 0,
+  progress: 1, playing: false, lastT: 0, snap: 0, frame: true,
 };
 const cur = () => S.objects[S.sel];
 
@@ -771,7 +771,7 @@ function renderFrame(R, tau, lk, opts = {}) {
     c.moveTo(Math.round(mx) + 0.5, 0); c.lineTo(Math.round(mx) + 0.5, R.H); c.moveTo(0, Math.round(my) + 0.5); c.lineTo(R.W, Math.round(my) + 0.5);
     c.stroke(); c.restore();
   }
-  if (opts.selection && S.objects.length && cur().fit) { // on-screen only, never in the video
+  if (opts.selection && S.frame && S.objects.length && cur().fit) { // on-screen only, never in the video
     const q = objCorners(R, cur());
     c.save(); c.setLineDash([6 * R.short / 1000 + 3, 6 * R.short / 1000 + 3]);
     c.strokeStyle = "rgba(169,184,255,.55)"; c.lineWidth = 1.5 * R.short / 1000 + 0.5;
@@ -1085,7 +1085,7 @@ function setObjRot(v, snap = false) {
 let drag = null;
 cv.addEventListener("pointerdown", ev => {
   if (!S.drawMode) {
-    if (hitHandle(ev)) {
+    if (S.frame && hitHandle(ev)) {
       ev.preventDefault();
       const o = cur();
       drag = { id: ev.pointerId, rotate: true, a0: pointerAngle(ev, o), rot0: o.rot || 0 };
@@ -1093,9 +1093,9 @@ cv.addEventListener("pointerdown", ev => {
       return;
     }
     const i = hitObject(ev);
-    if (i < 0) return;
+    if (i < 0) { S.frame = false; cv.classList.remove("rotate"); return; } // click on empty space hides the frame
     ev.preventDefault();
-    selectObject(i);
+    selectObject(i); S.frame = true;
     const [x, y] = canvasPx(ev), o = cur();
     drag = { id: ev.pointerId, dx: o.u * cv.width - x, dy: o.v * cv.height - y };
     cv.setPointerCapture(ev.pointerId); cv.classList.add("grabbing");
@@ -1121,7 +1121,7 @@ cv.addEventListener("pointermove", ev => {
       o.u = Math.min(1, Math.max(0, sx / cv.width)); o.v = Math.min(1, Math.max(0, sy / cv.height));
       resetTrace(viewR);
     } else if (ev.pointerType === "mouse") {
-      const h = hitHandle(ev);
+      const h = S.frame && hitHandle(ev);
       cv.classList.toggle("rotate", h);
       cv.classList.toggle("grab", !h && S.objects.length > 1 && hitObject(ev) >= 0);
     }
@@ -1198,7 +1198,7 @@ function refreshShapeUI() {
 }
 function selectObject(i) {
   if (S.drawMode || i === S.sel) return;
-  S.sel = i; refreshShapeUI(); updateInfo();
+  S.sel = i; S.frame = true; refreshShapeUI(); updateInfo();
 }
 function setObjSize(v) { cur().size = Math.min(3, Math.max(0.1, v)); refreshShapeUI(); resetTrace(viewR); }
 // even grid that gives each object the biggest possible cell on this canvas
@@ -1272,7 +1272,7 @@ $("layoutObj").addEventListener("click", layoutObjects);
 $("centerObj").addEventListener("click", centerObjects);
 $("snap").addEventListener("change", () => { S.snap = +$("snap").value; });
 $("objSize").addEventListener("input", () => setObjSize(+$("objSize").value / 100));
-$("objRot").addEventListener("input", () => setObjRot(+$("objRot").value * Math.PI / 180, true));
+$("objRot").addEventListener("input", () => { S.frame = true; setObjRot(+$("objRot").value * Math.PI / 180, true); });
 $("objRot").addEventListener("dblclick", () => setObjRot(0, true));
 
 function setSide(s) { S.side = s; for (const [id, v] of [["sideIn", "inside"], ["sideOut", "outside"], ["sideBoth", "both"]]) $(id).setAttribute("aria-pressed", s === v); rebuild(); setPlaying(false); }

@@ -94,12 +94,17 @@ input[type=number]{width:70px;font-family:var(--f-num)}
         <button id="addObj">+ Добавить объект</button>
         <button id="delObj">Удалить выбранный</button>
         <button id="layoutObj">Расставить ровно</button>
+        <button id="centerObj" title="Вписать готовый узор в холст по центру">Центрировать</button>
+      </div>
+      <div class="inline">
+        <label for="snap">Привязка к сетке</label>
+        <select id="snap"><option value="0">выкл</option><option value="2">центр и половины</option><option value="4">4 клетки</option><option value="6">6 клеток</option><option value="8">8 клеток</option><option value="12">12 клеток</option></select>
       </div>
       <div class="row" id="objSizeRow">
         <label for="objSize">Размер выбранного объекта</label><output id="objSizeOut"></output>
-        <input type="range" id="objSize" min="10" max="150" value="100">
+        <input type="range" id="objSize" min="10" max="300" value="100">
       </div>
-      <p class="note" id="objNote">Все объекты рисуются одновременно с одинаковыми настройками. Перетаскивайте их по холсту мышью или пальцем, колёсико мыши над объектом меняет его размер.</p>
+      <p class="note" id="objNote">Все объекты рисуются одновременно с одинаковыми настройками. Перетаскивайте их по холсту мышью или пальцем, колёсико мыши над объектом меняет его размер. «Центрировать» вписывает весь готовый рисунок в холст по центру. С привязкой к сетке центр объекта при перетаскивании прилипает к узлам сетки (число клеток считается по короткой стороне), линии сетки видны только здесь, в видео их нет.</p>
     </section>
 
     <section>
@@ -297,7 +302,7 @@ const S = {
   side: "inside",
   drawMode: null, drawing: null,
   items: [],
-  progress: 1, playing: false, lastT: 0,
+  progress: 1, playing: false, lastT: 0, snap: 0,
 };
 const cur = () => S.objects[S.sel];
 
@@ -572,7 +577,7 @@ function fitView(models, pts) {
     for (let i = 0; i < model.N; i += 3) { add(model.CX[i] - model.r, model.CY[i] - model.r); add(model.CX[i] + model.r, model.CY[i] + model.r); add(model.PX[i], model.PY[i]); }
   }
   const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, span = Math.max(x1 - x0, y1 - y0, 1e-6);
-  return { cx, cy, span: span / 0.88 };
+  return { cx, cy, span: span / 0.88, w: x1 - x0, h: y1 - y0 };
 }
 
 function updateInfo() {
@@ -746,12 +751,29 @@ function renderFrame(R, tau, lk, opts = {}) {
     c.drawImage(R.trace, 0, 0);
     if (lk.showWheel && !opts.hideWheel && tau < 1) S.items.forEach((it, j) => drawWheel(R, objXf(R, it.o), it.m, idxs[j], lk));
   }
+  if (opts.selection && S.snap) { // grid guide: on-screen only, never in the video
+    const st = gridStep(R), mx = R.W / 2, my = R.H / 2;
+    c.save(); c.strokeStyle = "rgba(169,184,255,.16)"; c.lineWidth = 1; c.beginPath();
+    for (let x = mx - Math.floor(mx / st) * st; x <= R.W + 0.5; x += st) { c.moveTo(Math.round(x) + 0.5, 0); c.lineTo(Math.round(x) + 0.5, R.H); }
+    for (let y = my - Math.floor(my / st) * st; y <= R.H + 0.5; y += st) { c.moveTo(0, Math.round(y) + 0.5); c.lineTo(R.W, Math.round(y) + 0.5); }
+    c.stroke();
+    c.strokeStyle = "rgba(169,184,255,.38)"; c.beginPath();
+    c.moveTo(Math.round(mx) + 0.5, 0); c.lineTo(Math.round(mx) + 0.5, R.H); c.moveTo(0, Math.round(my) + 0.5); c.lineTo(R.W, Math.round(my) + 0.5);
+    c.stroke(); c.restore();
+  }
   if (opts.selection && S.objects.length > 1) { // on-screen only, never in the video
     const b = objBox(R, cur());
     c.save(); c.setLineDash([6 * R.short / 1000 + 3, 6 * R.short / 1000 + 3]);
     c.strokeStyle = "rgba(169,184,255,.55)"; c.lineWidth = 1.5 * R.short / 1000 + 0.5;
     c.strokeRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0); c.restore();
   }
+}
+function gridStep(R) { return R.short / S.snap; }
+// snap a canvas point to the grid, whose nodes include the canvas centre
+function snapPx(R, x, y) {
+  if (!S.snap) return [x, y];
+  const st = gridStep(R), mx = R.W / 2, my = R.H / 2;
+  return [mx + Math.round((x - mx) / st) * st, my + Math.round((y - my) / st) * st];
 }
 // square the object's pattern fills, in canvas pixels
 function objBox(R, o) {
@@ -1035,7 +1057,8 @@ cv.addEventListener("pointermove", ev => {
   if (!S.drawMode) {
     if (drag && drag.id === ev.pointerId) {
       const [x, y] = canvasPx(ev), o = cur();
-      o.u = Math.min(1, Math.max(0, (x + drag.dx) / cv.width)); o.v = Math.min(1, Math.max(0, (y + drag.dy) / cv.height));
+      const [sx, sy] = snapPx(viewR, x + drag.dx, y + drag.dy);
+      o.u = Math.min(1, Math.max(0, sx / cv.width)); o.v = Math.min(1, Math.max(0, sy / cv.height));
       resetTrace(viewR);
     } else if (ev.pointerType === "mouse") cv.classList.toggle("grab", S.objects.length > 1 && hitObject(ev) >= 0);
     return;
@@ -1112,7 +1135,7 @@ function selectObject(i) {
   if (S.drawMode || i === S.sel) return;
   S.sel = i; refreshShapeUI(); updateInfo();
 }
-function setObjSize(v) { cur().size = Math.min(1.5, Math.max(0.1, v)); refreshShapeUI(); resetTrace(viewR); }
+function setObjSize(v) { cur().size = Math.min(3, Math.max(0.1, v)); refreshShapeUI(); resetTrace(viewR); }
 // even grid that gives each object the biggest possible cell on this canvas
 function layoutObjects() {
   const a = ASPECTS[S.aspect], n = S.objects.length;
@@ -1128,6 +1151,22 @@ function layoutObjects() {
     o.v = (a.h / 2 + (r - (rows - 1) / 2) * cell) / a.h;
     o.size = cell / short;
   });
+  refreshShapeUI(); resetTrace(viewR);
+}
+// scale and move the whole composition so the finished pattern fits the canvas, centred
+function centerObjects() {
+  const objs = S.objects.filter(o => o.fit && o.fit.w >= 0);
+  if (!objs.length) return;
+  const a = ASPECTS[S.aspect], W = a.w, H = a.h, short = Math.min(W, H), M = 0.92;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const o of objs) {
+    const k = o.size * short / o.fit.span, cx = o.u * W, cy = o.v * H, hx = o.fit.w / 2 * k, hy = o.fit.h / 2 * k;
+    x0 = Math.min(x0, cx - hx); x1 = Math.max(x1, cx + hx); y0 = Math.min(y0, cy - hy); y1 = Math.max(y1, cy + hy);
+  }
+  const gx = (x0 + x1) / 2, gy = (y0 + y1) / 2;
+  let s = Math.min(W * M / Math.max(x1 - x0, 1e-9), H * M / Math.max(y1 - y0, 1e-9));
+  s = Math.min(s, Math.min(...objs.map(o => 3 / o.size)));
+  for (const o of objs) { o.u = (W / 2 + (o.u * W - gx) * s) / W; o.v = (H / 2 + (o.v * H - gy) * s) / H; o.size *= s; }
   refreshShapeUI(); resetTrace(viewR);
 }
 function setAspect(key) {
@@ -1164,6 +1203,8 @@ $("delObj").addEventListener("click", () => {
   refreshShapeUI(); rebuild(true);
 });
 $("layoutObj").addEventListener("click", layoutObjects);
+$("centerObj").addEventListener("click", centerObjects);
+$("snap").addEventListener("change", () => { S.snap = +$("snap").value; });
 $("objSize").addEventListener("input", () => setObjSize(+$("objSize").value / 100));
 
 function setSide(s) { S.side = s; for (const [id, v] of [["sideIn", "inside"], ["sideOut", "outside"], ["sideBoth", "both"]]) $(id).setAttribute("aria-pressed", s === v); rebuild(); setPlaying(false); }

@@ -77,7 +77,7 @@ input[type=number]{width:70px;font-family:var(--f-num)}
     </header>
     <div class="canvas-wrap"><canvas id="view" width="1000" height="1000" aria-label="Холст спинографа"></canvas></div>
     <div class="transport">
-      <button class="square" id="play" aria-label="Пауза">⏸</button>
+      <button class="square" id="play" aria-label="Играть">▶</button>
       <button class="square" id="restart" aria-label="Сначала">⟲</button>
       <input type="range" id="scrub" min="0" max="1000" value="0" aria-label="Прогресс рисования">
       <button class="square" id="finish">Сразу весь узор</button>
@@ -297,7 +297,7 @@ const S = {
   side: "inside",
   drawMode: null, drawing: null,
   items: [],
-  progress: 0, playing: true, lastT: 0,
+  progress: 1, playing: false, lastT: 0,
 };
 const cur = () => S.objects[S.sel];
 
@@ -598,7 +598,9 @@ function rebuild(keepProgress = false) {
       o.models = built.models; o.fit = built.fit;
     }
     S.items = S.objects.flatMap(o => o.models.map(m => ({ o, m })));
-    if (!keepProgress) S.progress = 0;
+    // a change shows the finished pattern; the animation starts only from ▶
+    if (!keepProgress) S.progress = 1;
+    $("scrub").value = Math.round(S.progress * 1000);
     resetTrace(viewR);
     const label = { inside: "внутри", outside: "снаружи" };
     updateInfo();
@@ -949,7 +951,7 @@ function endDraw() {
   const d = S.drawing; const mode = S.drawMode;
   S.drawMode = null; $("view").classList.remove("drawing"); $("polyDone").hidden = true; $("drawNote").hidden = true;
   $("drawFree").setAttribute("aria-pressed", "false"); $("drawPoly").setAttribute("aria-pressed", "false");
-  if (!d || d.length < 2) { rebuild(); setPlaying(true); return; }
+  if (!d || d.length < 2) { rebuild(); setPlaying(false); return; }
   let pts = d, closed = $("closed").checked;
   if (mode === "free") {
     const span = DRAW_SPAN;
@@ -968,7 +970,7 @@ function endDraw() {
   if (o.rawFree) o.rawFree = { pts: norm(o.rawFree.pts), closed, spacing: DRAW_SPAN / 300 * sc };
   o.preset = null;
   refreshShapeUI();
-  rebuild(); setPlaying(true);
+  rebuild(); setPlaying(false);
 }
 function resample(pts, closed, step) {
   const o = [pts[0]]; let carry = 0; const n = pts.length;
@@ -1069,7 +1071,7 @@ for (const name of Object.keys(PRESETS)) {
     const o = cur();
     o.shape = PRESETS[name](); o.preset = name; o.rawFree = null;
     refreshShapeUI();
-    rebuild(); setPlaying(true);
+    rebuild(); setPlaying(false);
   });
   presetBox.appendChild(b);
 }
@@ -1078,14 +1080,14 @@ $("closed").addEventListener("change", () => {
   const o = cur();
   if (o.shape.pts.length < 3) { $("closed").checked = false; return; }
   o.shape = { pts: o.shape.pts, closed: $("closed").checked };
-  rebuild(); setPlaying(true);
+  rebuild(); setPlaying(false);
 });
 $("smooth").addEventListener("input", () => {
   syncOutputs();
   const o = cur();
   if (o.rawFree) {
     const pts = smoothPath(o.rawFree.pts, o.rawFree.closed, +$("smooth").value, o.rawFree.spacing);
-    o.shape = { pts, closed: o.rawFree.closed }; rebuild(); setPlaying(true);
+    o.shape = { pts, closed: o.rawFree.closed }; rebuild(); setPlaying(false);
   }
 });
 /* ---------------- canvas format & objects ---------------- */
@@ -1154,7 +1156,7 @@ $("addObj").addEventListener("click", () => {
   const o = cur();
   S.objects.push(newObject(o.shape, o.preset, o.rawFree));
   S.sel = S.objects.length - 1;
-  layoutObjects(); rebuild(); setPlaying(true);
+  layoutObjects(); rebuild(); setPlaying(false);
 });
 $("delObj").addEventListener("click", () => {
   if (S.drawMode || S.objects.length < 2) return;
@@ -1164,14 +1166,14 @@ $("delObj").addEventListener("click", () => {
 $("layoutObj").addEventListener("click", layoutObjects);
 $("objSize").addEventListener("input", () => setObjSize(+$("objSize").value / 100));
 
-function setSide(s) { S.side = s; for (const [id, v] of [["sideIn", "inside"], ["sideOut", "outside"], ["sideBoth", "both"]]) $(id).setAttribute("aria-pressed", s === v); rebuild(); setPlaying(true); }
+function setSide(s) { S.side = s; for (const [id, v] of [["sideIn", "inside"], ["sideOut", "outside"], ["sideBoth", "both"]]) $(id).setAttribute("aria-pressed", s === v); rebuild(); setPlaying(false); }
 $("sideBoth").addEventListener("click", () => setSide("both"));
 $("sideIn").addEventListener("click", () => setSide("inside"));
 $("sideOut").addEventListener("click", () => setSide("outside"));
-for (const id of ["wheel", "ring", "gap", "pen", "phase", "laps"]) $(id).addEventListener("input", () => { syncOutputs(); rebuild(); setPlaying(true); });
+for (const id of ["wheel", "ring", "gap", "pen", "phase", "laps"]) $(id).addEventListener("input", () => { syncOutputs(); rebuild(); setPlaying(false); });
 for (const id of ["dur", "easeIn", "easeOut", "wheelAlpha", "gearTeeth", "pitchRate", "vol", "slowFx"]) $(id).addEventListener("input", syncOutputs);
 for (const id of ["hue", "width", "grad", "gradCycle", "c1", "c2", "c3", "inkColor", "bg", "shapeColor", "wheelColor"]) $(id).addEventListener("input", () => { syncOutputs(); resetTrace(viewR); });
-$("sound").addEventListener("change", () => { if ($("sound").checked) { unlockAudio(); liveEnsure(soundSettings()); if (S.progress >= 1) { S.progress = 0; setPlaying(true); } } });
+$("sound").addEventListener("change", () => { if ($("sound").checked) { unlockAudio(); liveEnsure(soundSettings()); } });
 // iOS only starts audio from inside a tap, so wake it on every transport tap
 for (const id of ["play", "restart", "finish", "scrub"]) $(id).addEventListener("pointerdown", () => { if ($("sound").checked) { unlockAudio(); liveEnsure(soundSettings()); } });
 $("play").addEventListener("click", () => { if (S.progress >= 1) S.progress = 0; setPlaying(!S.playing); });
